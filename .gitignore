@@ -1,0 +1,13 @@
+# Vídeos y datos de prueba (pesados / privados)
+_pruebas/
+*.mp4
+*.mov
+*.webm
+
+# Configuración local de herramientas
+.claude/
+
+# Sistema
+Thumbs.db
+desktop.ini
+.DS_Store
