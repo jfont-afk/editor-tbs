@@ -4,6 +4,9 @@ Editor de vídeo para redes sociales (Reels, TikTok, Shorts) con el estilo de **
 Funciona en el navegador, en local: los vídeos nunca salen del ordenador.
 
 ## Cómo abrirlo
+**En la web (sin instalar nada):** https://jfont-afk.github.io/editor-tbs/ — ábrelo en Google Chrome.
+
+**En local:**
 1. Doble clic en **`Abrir Editor.bat`** (Windows). Arranca un servidor local en `http://localhost:5179` y abre Chrome.
 2. Deja abierta la ventana negra mientras editas.
 
