@@ -1,6 +1,6 @@
 import { html, useState, fmtTime, downloadBlob } from '../../lib.js';
 import { state, busy, toast, projectVersion } from '../../core/store.js';
-import { Btn, Section, Seg } from '../controls.js';
+import { Btn, Section, Seg, Toggle } from '../controls.js';
 import { exportMP4 } from '../../export/exporter.js';
 import { captionGroups, toSRT } from '../../core/captions.js';
 import { totalDuration } from '../../core/timeline.js';
@@ -13,10 +13,13 @@ export function ExportPanel() {
   const p = state.project;
   const [res, setRes] = useState(1);
   const [fps, setFps] = useState(p.fps || 30);
-  const [q, setQ] = useState('alta');
+  const [q, setQ] = useState('maxima');
+  const [norm, setNorm] = useState(true);
   const dur = totalDuration(p);
   const W = Math.round(p.format.w * res), H = Math.round(p.format.h * res);
   const supported = 'VideoEncoder' in window;
+  // Mbps para 1080p a 30 fps (a 60 fps ×1,5). Las redes recomprimen: cuanto mejor llegue, mejor se ve.
+  const mbps = { maxima: 24, alta: 16, ligera: 8 }[q] * (fps > 30 ? 1.5 : 1);
 
   const run = async () => {
     player.pause();
@@ -33,13 +36,15 @@ export function ExportPanel() {
     try {
       const blob = await exportMP4({
         project: p, version: projectVersion, safeZone: state.ui.safeZone, scale: res, fps,
-        bitrate: q === 'alta' ? 16e6 : 9e6, signal: ac.signal,
+        bitrate: mbps * 1e6, normalize: norm, signal: ac.signal,
         onProgress: (pr, eta, text) => busy({ ...b, progress: pr, eta, text: `${text} ${Math.round(pr * 100)}%` }),
       });
       const stampName = name.replace(/\.mp4$/, `_${new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-')}.mp4`);
-      if (PF.folderActive() && await PF.saveToFolder('Exportaciones', stampName, blob)) toast(`Exportado en la carpeta del proyecto › Exportaciones`);
-      else if (handle) { const w = await handle.createWritable(); await w.write(blob); await w.close(); toast('Vídeo exportado'); }
-      else { downloadBlob(blob, name); toast('Vídeo exportado en Descargas'); }
+      const li = blob.info?.loud;
+      const extra = li && isFinite(li.before) ? ` · audio ${li.before.toFixed(1).replace('.', ',')} → −14 LUFS` : '';
+      if (PF.folderActive() && await PF.saveToFolder('Exportaciones', stampName, blob)) toast(`Exportado en la carpeta del proyecto › Exportaciones${extra}`, 'ok', 6000);
+      else if (handle) { const w = await handle.createWritable(); await w.write(blob); await w.close(); toast('Vídeo exportado' + extra, 'ok', 6000); }
+      else { downloadBlob(blob, name); toast('Vídeo exportado en Descargas' + extra, 'ok', 6000); }
     } catch (e) {
       if (e.name === 'AbortError') toast('Exportación cancelada', 'err');
       else { console.error(e); toast('Error al exportar: ' + e.message, 'err', 7000); }
@@ -59,8 +64,9 @@ export function ExportPanel() {
           <div class="field"><span class="field-label">Fotogramas por segundo</span>
             <${Seg} value=${fps} onChange=${setFps} options=${[[25, '25'], [30, '30'], [60, '60']]} /></div>
           <div class="field"><span class="field-label">Calidad</span>
-            <${Seg} value=${q} onChange=${setQ} options=${[['alta', 'Alta'], ['media', 'Ligera']]} /></div>
-          <div class="note"><b>${W}×${H}</b> · ${fmtTime(dur)} · ${fps} fps · H.264 + AAC.<br/>La exportación tarda aproximadamente lo que dura el vídeo. No cierres la pestaña.</div>
+            <${Seg} value=${q} onChange=${setQ} options=${[['maxima', 'Máxima'], ['alta', 'Alta'], ['ligera', 'Ligera']]} /></div>
+          <${Toggle} label="Audio optimizado para redes" sub="Volumen a −14 LUFS (el de Instagram, TikTok y YouTube) con limitador: se oye claro y sin saturar" value=${norm} onChange=${setNorm} />
+          <div class="note"><b>${W}×${H}</b> · ${fmtTime(dur)} · ${fps} fps · H.264 ${Math.round(mbps * res * res)} Mbps · AAC 48 kHz a la máxima calidad del navegador.<br/>Nitidez máxima: se decodifica el original a más resolución y se reduce con el escalado de mayor calidad. No cierres la pestaña mientras exporta.</div>
           ${!supported && html`<div class="note warn">Este navegador no permite exportar. Abre el editor en Google Chrome.</div>`}
           <${Btn} cls="cta lg" icon="download" disabled=${!p.clips.length || !supported} onClick=${run}>Exportar MP4</${Btn}>
         </div>

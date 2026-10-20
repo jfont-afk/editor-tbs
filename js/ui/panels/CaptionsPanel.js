@@ -9,6 +9,10 @@ import { layoutCaption, drawCaption } from '../../render/captions.js';
 import { WHISPER_MODELS, LANGS } from '../../ai/transcribe.js';
 import { player, timeBus } from '../../engine/player.js';
 import { C } from '../../data/brand.js';
+import { MOTIONS } from '../../render/motions.js';
+import { motionPreview } from './MotionsPanel.js';
+import { runtime } from '../../core/store.js';
+import { GLOSSARY_DEFAULT, userGlossary, saveUserGlossary } from '../../ai/glossary.js';
 
 // ---------- Miniaturas de plantillas (renderizadas con el motor real) ----------
 const SAMPLES = {
@@ -71,7 +75,7 @@ function Templates() {
     <div class="row wrap" style="gap:4px">${cats.map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} onClick=${() => setCat(c)}>${c}</button>`)}</div>
     <div class="cards three">
       ${list.map(t => html`<div class=${'card' + (p.captions.template === t.id ? ' on' : '')} key=${t.id} title=${t.ref} role="button" tabindex="0"
-        onClick=${() => update(pp => { pp.captions.template = t.id; pp.captions.wordsPerGroup = t.words || pp.captions.wordsPerGroup; pp.captions.maxChars = t.maxChars || pp.captions.maxChars; pp.captions.posY = t.posY ?? pp.captions.posY; pp.captions.posX = 0.5; pp.captions.style = {}; pp.captions.anim = null; pp.captions.color = null; pp.captions.hlColor = null; })}>
+        onClick=${() => update(pp => { pp.captions.template = t.id; pp.captions.wordsPerGroup = t.words || pp.captions.wordsPerGroup; pp.captions.maxChars = t.maxChars || pp.captions.maxChars; pp.captions.posY = t.posY ?? pp.captions.posY; pp.captions.posX = t.posX ?? 0.5; pp.captions.posFree = !!t.user; pp.captions.style = {}; pp.captions.anim = null; pp.captions.color = null; pp.captions.hlColor = null; })}>
         <img src=${templatePreview(t)} style="aspect-ratio:4/5" />
         <div class="card-label">${t.name}${t.cat === 'Mis plantillas' && html`<button class="gbtn" title="Borrar plantilla" onClick=${e => { e.stopPropagation(); deleteUserTemplate(t.id); previewCache.delete(t.id); force(n => n + 1); }}><${Icon} name="trash" /></button>`}</div>
       </div>`)}
@@ -112,7 +116,8 @@ function WordChip({ it }) {
   if (edit) return html`<input class="gword-edit" autofocus value=${w.text}
     onKeyDown=${e => { if (e.key === 'Enter') { A.editWordText(w.id, e.target.value.trim() || w.text); setEdit(false); } if (e.key === 'Escape') setEdit(false); }}
     onBlur=${e => { A.editWordText(w.id, e.target.value.trim() || w.text); setEdit(false); }} />`;
-  return html`<button class=${'gword' + (w.hl ? ' hl' + w.hl : '')} title="Clic: destacar · Doble clic: editar"
+  return html`<button class=${'gword' + (w.hl ? ' hl' + w.hl : '') + (w.nl ? ' nl' : '')} title="Clic: destacar · Doble clic: editar · Arrastra al bloque de al lado para moverla" draggable="true"
+    onDragStart=${e => { e.dataTransfer.setData('text/x-tbs-word', w.id); e.dataTransfer.effectAllowed = 'move'; }}
     onClick=${e => { e.stopPropagation(); A.cycleHighlight(w.id); }} onDblClick=${e => { e.stopPropagation(); setEdit(true); }}>${w.text}</button>`;
 }
 
@@ -136,16 +141,21 @@ function Groups() {
       else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom + 8;
     }
   }, [cur]);
+  const [over, setOver] = useState(null);
   if (!groups.length) return html`<div class="dim small">Aún no hay bloques.</div>`;
   return html`<div class="groups" ref=${listRef}>
     ${groups.map((g, gi) => {
       const behind = g.ov?.behind ?? p.captions.behind;
-      return html`<div key=${g.id} data-g=${g.id} class=${'group' + (cur === g.id ? ' cur' : '') + (ui.sel?.id === g.id ? ' sel' : '')}
+      return html`<div key=${g.id} data-g=${g.id} class=${'group' + (cur === g.id ? ' cur' : '') + (ui.sel?.id === g.id ? ' sel' : '') + (over === g.id ? ' drop' : '')}
+        onDragOver=${e => { if (e.dataTransfer.types.includes('text/x-tbs-word')) { e.preventDefault(); setOver(g.id); } }}
+        onDragLeave=${() => setOver(o => (o === g.id ? null : o))}
+        onDrop=${e => { e.preventDefault(); setOver(null); const id = e.dataTransfer.getData('text/x-tbs-word'); if (id) A.moveWordToBlock(id, g.id); }}
         onClick=${() => { setUI({ sel: { type: 'group', id: g.id } }); player.seek(g.start + 0.01); }}>
         <div class="group-top">
           <span>${fmtTime(g.start, true)}</span>
           ${g.ov?.template && html`<span class="tag fluor" style="height:16px;font-size:8px">propio</span>`}
           <span class="spacer"></span>
+          <button class="gbtn" title="Editar el texto en el reproductor" onClick=${e => { e.stopPropagation(); player.seek(g.start + 0.01); player.pause(); setUI({ sel: { type: 'group', id: g.id }, editCap: g.id }); }}><${Icon} name="pencil" /></button>
           ${gi > 0 && html`<button class="gbtn" title="Unir con el bloque anterior" onClick=${e => { e.stopPropagation(); A.joinWithPrev(g.id); }}><${Icon} name="merge" /></button>`}
           <button class=${'gbtn' + (behind ? ' on' : '')} title="Detrás de la persona" onClick=${e => { e.stopPropagation(); A.setGroupStyle(g.id, { behind: !behind }); }}><${Icon} name="userBehind" /></button>
           <button class=${'gbtn' + (g.ov?.hidden ? ' on' : '')} title=${g.ov?.hidden ? 'Mostrar' : 'Ocultar este bloque'} onClick=${e => { e.stopPropagation(); A.setGroupStyle(g.id, { hidden: g.ov?.hidden ? null : true }); }}><${Icon} name=${g.ov?.hidden ? 'eyeOff' : 'eye'} /></button>
@@ -158,26 +168,86 @@ function Groups() {
   </div>`;
 }
 
+// ---------- Glosario: términos en inglés dentro del español ----------
+function Glossary() {
+  const [txt, setTxt] = useState(userGlossary());
+  const [open, setOpen] = useState(false);
+  const n = Object.keys(GLOSSARY_DEFAULT).length;
+  return html`<div class="stack">
+    <div class="dim small">Se corrigen solos al transcribir ${n} términos de trading y marketing (stop loss, price action, broker, setup, TradingView…). Añade los tuyos: uno por línea, y si quieres, cómo lo escribe mal la transcripción después de “=”.</div>
+    ${open ? html`<textarea class="input" rows="6" placeholder=${'Renta 4\nfunded account = fanded acaunt, fonded account\nMarco Dimio = marco dimio'} value=${txt} onInput=${e => setTxt(e.target.value)}></textarea>
+      <div class="row" style="gap:6px"><${Btn} cls="sm primary" onClick=${async () => { saveUserGlossary(txt); await A.runGlossary(); }}>Guardar y aplicar</${Btn}><${Btn} cls="sm ghost" onClick=${() => setOpen(false)}>Cerrar</${Btn}></div>`
+      : html`<div class="row" style="gap:6px"><${Btn} cls="sm" icon="pencil" onClick=${() => setOpen(true)}>Mis términos</${Btn}><${Btn} cls="sm" icon="check" onClick=${A.runGlossary}>Corregir ahora</${Btn}></div>`}
+    <div class="dim small">Para vídeos con mucho inglés, el modelo <b>Preciso</b> o <b>Máximo</b> reconoce mejor los términos.</div>
+  </div>`;
+}
+
+// ---------- Cajas de texto libres ----------
+const TEXT_STYLES = ['texto', 'tituloeditorial', 'gancho', 'destino', 'tituloglow', 'etiqueta', 'cita', 'lowerthird', 'tachado', 'seleccion'];
+function TextBoxes() {
+  const p = state.project, ui = state.ui;
+  const list = p.overlays.filter(o => TEXT_STYLES.includes(o.type)).sort((a, b) => a.start - b.start);
+  const label = (o) => String(o.props.text || o.props.title || o.props.name || o.props.word || MOTIONS[o.type]?.name || '').split('\n')[0];
+  return html`<div class="stack">
+    <div class="cards">
+      ${TEXT_STYLES.filter(id => MOTIONS[id]).map(id => html`<button class="card" key=${id} disabled=${!p.clips.length} onClick=${() => A.addOverlay(id)} title=${'Añadir ' + MOTIONS[id].name}>
+        <img src=${motionPreview(id)} style="aspect-ratio:16/9" />
+        <div class="card-label">${MOTIONS[id].name}</div>
+      </button>`)}
+    </div>
+    ${list.length > 0 && html`<div class="zoom-list">${list.map(o => html`<button class=${'zl-row' + (ui.sel?.id === o.id ? ' on' : '')} onClick=${() => { setUI({ sel: { type: 'overlay', id: o.id } }); player.seek(o.start + 0.05); }}>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label(o)}</span><span class="dim">${fmtTime(o.start)}${o.behind ? ' · detrás' : ''}</span></button>`)}</div>`}
+    <div class="dim small">Arrástralas en el reproductor (el imán las centra y las pega a los márgenes). Tipografía, mayúsculas, tamaño y color a la derecha.</div>
+  </div>`;
+}
+
+// ---------- Imágenes libres ----------
+function Images() {
+  const p = state.project, ui = state.ui;
+  const imgs = p.assets.filter(a => a.kind === 'image');
+  const list = p.overlays.filter(o => o.type === 'imagen');
+  const pick = () => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+    inp.onchange = () => A.importImageOverlays(inp.files); inp.click();
+  };
+  return html`<div class="stack">
+    <div class=${'dropzone small'} onDragOver=${e => e.preventDefault()} onDrop=${e => { e.preventDefault(); A.importImageOverlays(e.dataTransfer.files); }}>
+      <${Icon} name="imagePlus" />
+      <span class="muted small">PNG, JPG o WEBP · logos, capturas, fotos</span>
+      <${Btn} cls="primary" icon="upload" disabled=${!p.clips.length} onClick=${pick}>Añadir imagen</${Btn}>
+    </div>
+    ${imgs.length > 0 && html`<div class="field"><span class="field-label">Imágenes del proyecto</span>
+      <div class="img-grid">${imgs.map(a => { const rt = runtime.assets.get(a.id); return html`<button class="img-cell" title=${'Añadir ' + a.name} onClick=${() => A.addImageOverlay(a.id)}>${rt?.url ? html`<img src=${rt.url} />` : a.name}</button>`; })}</div></div>`}
+    ${list.length > 0 && html`<div class="zoom-list">${list.map(o => html`<button class=${'zl-row' + (ui.sel?.id === o.id ? ' on' : '')} onClick=${() => { setUI({ sel: { type: 'overlay', id: o.id } }); player.seek(o.start + 0.05); }}>
+      <span>${p.assets.find(a => a.id === o.props.assetId)?.name || 'Imagen'}</span><span class="dim">${fmtTime(o.start)}${o.behind ? ' · detrás' : ''}</span></button>`)}</div>`}
+  </div>`;
+}
+
 export function CaptionsPanel() {
   const p = state.project;
   const has = Object.keys(p.transcripts).length > 0;
+  const [area, setArea] = useState('subs');
   const [sub, setSub] = useState(has ? 'tpl' : 'gen');
   const view = has ? sub : 'gen';
   const nGroups = has ? captionGroups(p, projectVersion).length : 0;
   return html`
     <div class="panel-head">
       <div class="row" style="justify-content:space-between">
-        <h2 class="panel-title">Subtítulos</h2>
-        ${has && html`<${Toggle} label=${p.captions.enabled ? 'Visibles' : 'Ocultos'} value=${p.captions.enabled} onChange=${v => update(pp => { pp.captions.enabled = v; })} />`}
+        <h2 class="panel-title">Texto</h2>
+        ${area === 'subs' && has && html`<${Toggle} label=${p.captions.enabled ? 'Subtítulos visibles' : 'Subtítulos ocultos'} value=${p.captions.enabled} onChange=${v => update(pp => { pp.captions.enabled = v; })} />`}
       </div>
-      ${has && html`<div class="subtabs">
+      <div style="margin:8px 0 2px"><${Seg} value=${area} onChange=${setArea} options=${[['subs', 'Subtítulos'], ['text', 'Cajas de texto'], ['img', 'Imágenes']]} /></div>
+      ${area === 'subs' && has && html`<div class="subtabs">
         ${[['gen', 'Generar'], ['tpl', 'Plantillas'], ['blocks', `Bloques · ${nGroups}`]].map(([k, l]) => html`<button class=${view === k ? 'on' : ''} onClick=${() => setSub(k)}>${l}</button>`)}
       </div>`}
     </div>
     <div class="panel-body">
-      ${view === 'gen' && html`
-        <${Section} title="Transcripción automática"><${Generate} /></${Section}>`}
-      ${view === 'tpl' && html`
+      ${area === 'text' && html`<${Section} title="Estilos de texto" hint="se añade en el cursor"><${TextBoxes} /></${Section}>`}
+      ${area === 'img' && html`<${Section} title="Imágenes"><${Images} /></${Section}>`}
+      ${area === 'subs' && view === 'gen' && html`
+        <${Section} title="Transcripción automática"><${Generate} /></${Section}>
+        ${has && html`<${Section} title="Términos en inglés y nombres" hint="se corrigen solos"><${Glossary} /></${Section}>`}`}
+      ${area === 'subs' && view === 'tpl' && html`
         <${Section} title="Palabras en pantalla">
           <div class="stack">
             <${Seg} value=${p.captions.wordsPerGroup} onChange=${v => update(pp => { pp.captions.wordsPerGroup = v; pp.captions.maxChars = Math.max(12, v * 7); })} options=${[[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5'], [6, '6'], [8, '8']]} />
@@ -185,12 +255,13 @@ export function CaptionsPanel() {
           </div>
         </${Section}>
         <${Section} title="Pack de plantillas" hint="ajusta el estilo a la derecha"><${Templates} /></${Section}>`}
-      ${view === 'blocks' && html`
-        <div class="row" style="gap:6px;margin:6px 0 10px">
+      ${area === 'subs' && view === 'blocks' && html`
+        <div class="row wrap" style="gap:6px;margin:6px 0 10px">
+          <${Btn} cls="sm primary" icon="plus" onClick=${() => A.newBlockAtPlayhead()}>Bloque nuevo en el cursor</${Btn}>
           <${Btn} cls="sm" icon="sparkles" onClick=${A.runAutoHighlight}>Destacar automáticamente</${Btn}>
           <${Btn} cls="sm ghost" icon="repeat" onClick=${A.clearManualBreaks}>Reagrupar</${Btn}>
         </div>
-        <div class="hint-box"><b>Clic</b> en una palabra = destacar · <b>doble clic</b> = corregir · <b>|</b> entre palabras = separar el bloque</div>
+        <div class="hint-box"><b>Clic</b> en una palabra = destacar · <b>doble clic</b> = corregir · <b>|</b> = separar · <b>arrastra</b> una palabra al bloque de al lado para moverla · <b>doble clic en el reproductor</b> para reescribir el bloque (Intro = dos líneas)</div>
         <${Groups} />`}
     </div>`;
 }

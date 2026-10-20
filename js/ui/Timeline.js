@@ -9,7 +9,7 @@ import { Icon } from './icons.js';
 import { Btn } from './controls.js';
 import * as A from '../core/actions.js';
 
-const HEAD = 92;
+const HEAD = 104; // = ancho de .tl-head en css/app.css
 const H = { ruler: 26, ov: 26, cap: 34, video: 92 };
 
 function Ruler({ width, pps, dur }) {
@@ -204,7 +204,7 @@ export function Timeline() {
       <button class="tl-icon" title="Eliminar selección (Supr)" disabled=${!sel} onClick=${A.deleteSelection}><${Icon} name="trash" /></button>
       ${sel?.type === 'clip' && html`<button class="tl-icon" title="Duplicar clip" onClick=${() => A.duplicateClip(sel.id)}><${Icon} name="copy" /></button>`}
       <div class="top-spacer"></div>
-      <span class="dim small" style="font-family:var(--font-mono);margin-right:6px">${p.clips.length} clips · ${fmtTime(dur)}</span>
+      <span class="dim small tl-count" style="font-family:var(--font-mono);margin-right:6px;white-space:nowrap">${p.clips.length} ${p.clips.length === 1 ? 'clip' : 'clips'} · ${fmtTime(dur)}</span>
       <button class=${'tl-icon' + (p.autoZoom ? ' on' : '')} title="Zoom alterno en los cortes" onClick=${() => update(pp => { pp.autoZoom = !pp.autoZoom; })}><${Icon} name="magnet" /></button>
       <button class="tl-icon" title="Alejar" onClick=${() => setUI({ pxPerSec: clamp(pps / 1.4, 4, 400) })}><${Icon} name="zoomOut" /></button>
       <input class="range tl-zoom" type="range" min="4" max="400" step="1" value=${pps} style=${`--p:${(pps - 4) / 396 * 100}%`} onInput=${e => setUI({ pxPerSec: +e.target.value })} />

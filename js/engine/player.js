@@ -1,4 +1,5 @@
-import { state, runtime, emit, projectVersion, onProjectChange } from '../core/store.js';
+import { state, runtime, emit, projectVersion, onProjectChange, subscribe } from '../core/store.js';
+import { imageHooks } from '../render/motions.js';
 import { clipAt, layoutClips, totalDuration } from '../core/timeline.js';
 import { captionGroups } from '../core/captions.js';
 import { Compositor } from '../render/compositor.js';
@@ -36,6 +37,9 @@ class Player {
     this.onInfo = null;
     this.muted = false;
     onProjectChange(() => { this.comp.invalidate(); this.dirty = true; });
+    // al cambiar la selección se vuelve a dibujar (p. ej. marcos del zoom dinámico)
+    subscribe(() => { if (state.ui.sel !== this._lastSel) { this._lastSel = state.ui.sel; this.dirty = true; } });
+    imageHooks.onLoad = () => { this.dirty = true; };
     const loop = () => { this.tick(); requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
   }
@@ -211,9 +215,13 @@ class Player {
     const src = this.frameSource(t);
     if (src && this.isVideo(src.el) && src.el.readyState < 2) { this.dirty = true; return; }
     this.comp.setLogo(p.brand?.logo || null);
+    // mientras se edita un zoom dinámico se ve el plano completo con los marcos inicial y final
+    const sel = state.ui.sel;
+    const zsel = !state.ui.playing && sel?.type === 'overlay' ? p.overlays.find(o => o.id === sel.id && o.type === 'zoom' && o.props.mode === 'dinamico') : null;
     this.info = this.comp.render(this.ctx, c.width, c.height, t, src, {
       project: p, version: projectVersion, groups: captionGroups(p, projectVersion), total: this.duration,
       safeZone: state.ui.safeZone, compare: state.ui.compare, editing: !state.ui.playing, maxDim: state.ui.playing ? 1280 : 1920,
+      camEdit: zsel ? zsel.id : null,
     });
     if (this.info?.maskMissing) this.dirty = true;
     this.onInfo && this.onInfo(this.info);

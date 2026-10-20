@@ -76,6 +76,7 @@ export function removeAsset(assetId) {
   update(p => {
     p.clips = p.clips.filter(c => c.assetId !== assetId);
     p.assets = p.assets.filter(a => a.id !== assetId);
+    p.overlays = p.overlays.filter(o => o.props?.assetId !== assetId);
     delete p.transcripts[assetId];
   });
   player.seek(Math.min(timeBus.t, player.duration));
@@ -116,6 +117,8 @@ export function moveClip(id, toIndex) { update(p => TL.moveClip(p, id, toIndex))
 
 export function updateClip(id, patch, key) {
   update(p => { const c = p.clips.find(x => x.id === id); if (c) Object.assign(c, typeof patch === 'function' ? patch(c) : patch); }, { key });
+  // la velocidad cambia la duración: se vuelve a sincronizar el reproductor
+  if (patch && patch.speed !== undefined) player.seek(Math.min(timeBus.t, player.duration));
 }
 
 export function duplicateClip(id) {
@@ -182,7 +185,10 @@ export async function transcribeAll({ model, lang, force = false }) {
         },
       });
       if (!cached?.length) idbPut(cacheKey, words.map(({ text, start, end }) => ({ text, start, end, hl: 0 })));
-      update(pp => { pp.transcripts[a.id] = { lang, model, words }; });
+      // términos en inglés y nombres propios (glosario)
+      const { applyGlossary } = await import('../ai/glossary.js');
+      const fixed = applyGlossary(words);
+      update(pp => { pp.transcripts[a.id] = { lang, model, words, glossary: fixed }; });
       // destacados automáticos (1 por bloque)
       const groups = captionGroups(state.project, projectVersion);
       const marks = new Set(autoHighlight(groups));
@@ -230,6 +236,198 @@ export function setGroupStyle(groupId, patch) {
 
 export function clearManualBreaks() {
   update(p => { for (const tr of Object.values(p.transcripts)) for (const w of tr.words) delete w.br; });
+}
+
+// Vuelve a pasar el glosario por todas las transcripciones
+export async function runGlossary() {
+  const { applyGlossary } = await import('../ai/glossary.js');
+  let n = 0;
+  update(p => { for (const tr of Object.values(p.transcripts)) n += applyGlossary(tr.words); });
+  toast(n ? `${n} término${n > 1 ? 's' : ''} corregido${n > 1 ? 's' : ''}` : 'No había nada que corregir');
+  return n;
+}
+
+// ---------- Imágenes libres (pestaña Texto) ----------
+export function addImageOverlay(assetId) {
+  const total = player.duration || 10, t = timeBus.t;
+  const o = { id: uid('o'), type: 'imagen', start: Math.min(t, Math.max(0, total - 0.5)), dur: Math.min(4, Math.max(0.5, total - t)), x: 0.5, y: 0.4, scale: 1, rot: 0, props: { ...structuredClone(MOTIONS.imagen.props), assetId }, animIn: 'pop', animOut: 'fade', behind: false };
+  update(p => p.overlays.push(o));
+  setUI({ sel: { type: 'overlay', id: o.id } });
+  player.seek(o.start + 0.3);
+}
+export async function importImageOverlays(files) {
+  for (const file of [...files]) {
+    if (fileKind(file) !== 'image') { toast(`${file.name} no es una imagen`, 'err'); continue; }
+    try {
+      const { asset, url } = await probeFile(file);
+      runtime.assets.set(asset.id, { file, url, kind: 'image', handle: null, thumbs: [], audio: null, status: 'analyzing' });
+      update(p => { p.assets.push(asset); });
+      analyzeAsset(asset);
+      addImageOverlay(asset.id);
+      const PF = await import('./projectFolder.js');
+      if (PF.folderActive()) {
+        const raw = await PF.copyRaw(asset, file).catch(() => null);
+        if (raw) update(pp => { const a = pp.assets.find(x => x.id === asset.id); if (a) a.raw = raw; }, { history: false });
+      }
+    } catch (e) { console.error(e); toast(`No se pudo abrir ${file.name}`, 'err'); }
+  }
+}
+
+// ---------- Bloques de subtítulos: editar texto, mover palabras, bloques nuevos ----------
+const normKey = (s) => String(s).toLocaleLowerCase('es').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+const groupsNow = () => captionGroups(P(), projectVersion);
+
+// Fija un bloque exacto: la primera palabra abre bloque y el resto se queda unido (aunque supere el nº de palabras).
+function pinBlock(words, gs) {
+  words.forEach((w, i) => { w.br = i === 0 ? true : false; if (i === 0) delete w.nl; delete w.gs; });
+  if (words[0] && gs) words[0].gs = gs;
+}
+function wordIndex(p) {
+  const m = new Map();
+  for (const tr of Object.values(p.transcripts)) for (const w of tr.words) m.set(w.id, { w, tr });
+  return m;
+}
+
+/**
+ * Texto editado en el reproductor (doble clic) → palabras del bloque.
+ * Las palabras que no cambian conservan sus tiempos; las nuevas se reparten el tiempo de la anterior;
+ * las borradas solo desaparecen del subtítulo (el vídeo no se corta). Intro = salto de línea.
+ */
+export function editBlockText(groupId, text) {
+  const groups = groupsNow();
+  const gi = groups.findIndex(g => g.id === groupId);
+  if (gi < 0) return;
+  const g = groups[gi], next = groups[gi + 1];
+  const toks = [];
+  let nl = false;
+  for (const part of String(text).replace(/\r/g, '').split(/(\s+)/)) {
+    if (!part) continue;
+    if (/^\s+$/.test(part)) { if (part.includes('\n') && toks.length) nl = true; continue; }
+    toks.push({ text: part, nl }); nl = false;
+  }
+  const ids = g.items.map(x => x.w.id);
+  update(p => {
+    const idx = wordIndex(p);
+    const olds = ids.map(id => idx.get(id)).filter(Boolean);
+    if (!olds.length) return;
+    const gs = olds.find(o => o.w.gs)?.w.gs;
+    // alineación (LCS) entre lo que había y lo escrito
+    const A = olds.map(o => normKey(o.w.text)), B = toks.map(t => normKey(t.text));
+    const n = A.length, m = B.length;
+    const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] && A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const order = []; // palabras finales en orden
+    const extra = new Map(); // ancla → palabras nuevas detrás de ella
+    let head = [];      // palabras nuevas antes de la primera conservada
+    let anchor = null, runO = [], runT = [];
+    const set = (o, t) => { o.w.text = t.text; if (t.nl) o.w.nl = true; else delete o.w.nl; delete o.w.del; order.push(o); anchor = o; };
+    const flush = () => {
+      const k = Math.min(runO.length, runT.length);
+      for (let q = 0; q < k; q++) set(olds[runO[q]], toks[runT[q]]);
+      for (let q = k; q < runO.length; q++) { olds[runO[q]].w.del = true; delete olds[runO[q]].w.gs; }
+      for (let q = k; q < runT.length; q++) {
+        const t = toks[runT[q]];
+        const nw = { id: uid('w'), text: t.text, start: 0, end: 0, hl: 0, ...(t.nl ? { nl: true } : {}) };
+        if (anchor) { if (!extra.has(anchor)) extra.set(anchor, []); extra.get(anchor).push(nw); } else head.push(nw);
+      }
+      runO = []; runT = [];
+    };
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && A[i] && A[i] === B[j]) { flush(); set(olds[i++], toks[j++]); }
+      else if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) runT.push(j++);
+      else runO.push(i++);
+    }
+    flush();
+    // Colocar las palabras nuevas: se reparten el tiempo de su ancla
+    const place = (o, list, before) => {
+      const w = o.w, s = w.start, e = Math.max(w.end, s + 0.12 * (list.length + 1));
+      const d = (e - s) / (list.length + 1);
+      const k0 = o.tr.words.indexOf(w);
+      if (before) {
+        list.forEach((nw, q) => { nw.start = s + d * q; nw.end = s + d * (q + 1); });
+        w.start = s + d * list.length; w.end = e;
+        o.tr.words.splice(k0, 0, ...list);
+      } else {
+        w.end = s + d;
+        list.forEach((nw, q) => { nw.start = s + d * (q + 1); nw.end = s + d * (q + 2); });
+        o.tr.words.splice(k0 + 1, 0, ...list);
+      }
+    };
+    for (const [o, list] of extra) place(o, list, false);
+    let final = order.flatMap(o => [o.w, ...(extra.get(o) || [])]);
+    if (head.length) {
+      if (order[0]) { place(order[0], head, true); final = [...head, ...final]; }
+      else {
+        // se ha reescrito todo con palabras nuevas: ocupan el tiempo del bloque original
+        const o0 = olds[0], s = g.items[0].w.start, e = Math.max(olds[olds.length - 1].w.end, s + 0.12 * head.length);
+        const d = (e - s) / head.length;
+        head.forEach((nw, q) => { nw.start = s + d * q; nw.end = s + d * (q + 1); });
+        o0.tr.words.splice(o0.tr.words.indexOf(o0.w), 0, ...head);
+        final = head;
+      }
+    }
+    if (final.length) pinBlock(final, gs);
+    if (next) { const nx = idx.get(next.id); if (nx) nx.w.br = true; }
+  });
+}
+
+// Arrastrar una palabra a otro bloque contiguo (anterior o siguiente)
+export function moveWordToBlock(wordId, targetId) {
+  const groups = groupsNow();
+  const gi = groups.findIndex(g => g.items.some(x => x.w.id === wordId));
+  const ti = groups.findIndex(g => g.id === targetId);
+  if (gi < 0 || ti < 0 || gi === ti) return false;
+  if (Math.abs(gi - ti) !== 1) { toast('Solo se pueden mover palabras al bloque de al lado', 'err'); return false; }
+  const src = groups[gi], dst = groups[ti];
+  const k = src.items.findIndex(x => x.w.id === wordId);
+  const idsOf = (arr) => arr.map(x => x.w.id);
+  const lo = Math.min(gi, ti), hi = Math.max(gi, ti);
+  let first, second;
+  if (ti < gi) { first = [...idsOf(dst.items), ...idsOf(src.items.slice(0, k + 1))]; second = idsOf(src.items.slice(k + 1)); }
+  else { first = idsOf(src.items.slice(0, k)); second = [...idsOf(src.items.slice(k)), ...idsOf(dst.items)]; }
+  const after = groups[hi + 1];
+  update(p => {
+    const idx = wordIndex(p);
+    const gsLo = groups[lo].ov, gsHi = groups[hi].ov;
+    const get = (ids) => ids.map(id => idx.get(id)?.w).filter(Boolean);
+    const a = get(first), b = get(second);
+    if (a.length) pinBlock(a, gsLo);
+    if (b.length) pinBlock(b, gsHi);
+    if (after) { const x = idx.get(after.id); if (x) x.w.br = true; }
+  });
+  return true;
+}
+
+// Bloque nuevo en el cursor: si hay voz, divide el bloque ahí; si es un hueco, crea un texto nuevo
+export function newBlockAtPlayhead(text = 'Texto nuevo') {
+  const t = timeBus.t;
+  const groups = groupsNow();
+  const g = groups.find(x => t >= x.start && t < x.end);
+  if (g) {
+    const it = g.items.find(x => t < x.te) || g.items[g.items.length - 1];
+    if (it && it !== g.items[0]) { splitBefore(it.w.id); setUI({ sel: { type: 'group', id: it.w.id } }); toast('Bloque dividido en el cursor'); return; }
+  }
+  const p = P();
+  const hit = TL.clipAt(p, t);
+  if (!hit) return;
+  const nextG = groups.find(x => x.start > t + 0.01);
+  const dur = Math.max(0.4, Math.min(1.6, (nextG ? nextG.start : t + 1.6) - t));
+  const toks = text.split(/\s+/).filter(Boolean);
+  const sp = hit.clip.speed || 1;
+  const s0 = hit.src, s1 = Math.min(hit.clip.out, s0 + dur * sp);
+  const ws = toks.map((tx, i) => ({ id: uid('w'), text: tx, start: s0 + (s1 - s0) * i / toks.length, end: s0 + (s1 - s0) * (i + 1) / toks.length, hl: 0, br: i === 0 ? true : false }));
+  update(pp => {
+    const aid = hit.clip.assetId;
+    const tr = pp.transcripts[aid] || (pp.transcripts[aid] = { lang: 'manual', model: 'manual', words: [] });
+    let k = tr.words.findIndex(w => w.start >= s0);
+    if (k < 0) k = tr.words.length;
+    tr.words.splice(k, 0, ...ws);
+    const after = tr.words[k + ws.length];
+    if (after) after.br = true;
+    pp.captions.enabled = true;
+  });
+  setUI({ sel: { type: 'group', id: ws[0].id }, editCap: ws[0].id });
 }
 
 export function runAutoHighlight() {
@@ -289,6 +487,32 @@ export function findFillers() {
 }
 
 // ---------- Auto-encuadre de la cabeza (TikTok) ----------
+// Analiza (o recupera de la caché) la posición de la cara en los vídeos de la línea de tiempo
+export async function ensureFaceTracks(only = null) {
+  const p = P();
+  const assets = p.assets.filter(a => a.kind === 'video' && p.clips.some(c => c.assetId === a.id) && (!only || only.includes(a.id)));
+  if (!assets.length) return [];
+  const { analyzeFaces } = await import('../ai/reframe.js');
+  for (const a of assets) {
+    if (state.project.faceTracks?.[a.id]) continue;
+    const rt = runtime.assets.get(a.id);
+    if (!rt) continue;
+    const b = { title: 'Buscando la cara', text: `Analizando ${a.name}…`, progress: 0 };
+    busy(b);
+    const { idbGet, idbPut } = await import('./persist.js');
+    const key = `face|${a.name}|${a.size}|${a.duration.toFixed(2)}`;
+    let tr = await idbGet(key);
+    if (!tr?.pts) {
+      tr = await analyzeFaces(rt.url, a.duration, pr => busy({ ...b, progress: pr }));
+      tr.pts = tr.pts.map(q => q && q.map(v => Math.round(v * 10000) / 10000));
+      idbPut(key, tr);
+    }
+    update(pp => { pp.faceTracks = { ...(pp.faceTracks || {}), [a.id]: tr }; }, { history: false });
+  }
+  busy(null);
+  return assets;
+}
+
 export async function autoFrameHeads({ mode = 'follow', y = 0.32, maxZoom = 1.8, only = null } = {}) {
   const p = P();
   const assets = p.assets.filter(a => a.kind === 'video' && p.clips.some(c => c.assetId === a.id) && (!only || only.includes(a.id)));

@@ -128,15 +128,15 @@ function AnimTab({ st, set, scope }) {
 
 function PosTab({ st, scope }) {
   const p = state.project;
-  const setPos = (x, y) => {
-    if (scope === 'all') update(pp => { if (x !== null) pp.captions.posX = x; if (y !== null) pp.captions.posY = y; }, { key: 'cappos' });
+  const setPos = (x, y, fit = false) => {
+    if (scope === 'all') update(pp => { if (x !== null) pp.captions.posX = x; if (y !== null) pp.captions.posY = y; if (fit) pp.captions.posFree = false; }, { key: 'cappos' });
     else A.setGroupStyle(scope, { ...(x !== null ? { posX: x } : {}), ...(y !== null ? { posY: y } : {}) });
   };
   const px = st.posX ?? 0.5, py = st.posY ?? 0.64;
   const grid = [[0.3, 0.22], [0.5, 0.22], [0.7, 0.22], [0.3, 0.5], [0.5, 0.5], [0.7, 0.5], [0.3, 0.68], [0.5, 0.68], [0.7, 0.68]];
   const gs = scope !== 'all' ? A.findWord(scope)?.w.gs : null;
   return html`<div class="stack">
-    <div class="pos-pad">${grid.map(([x, y]) => html`<button class=${'pos-cell' + (Math.abs(px - x) < 0.05 && Math.abs(py - y) < 0.05 ? ' on' : '')} onClick=${() => setPos(x, y)}><span></span></button>`)}</div>
+    <div class="pos-pad">${grid.map(([x, y]) => html`<button class=${'pos-cell' + (Math.abs(px - x) < 0.05 && Math.abs(py - y) < 0.05 ? ' on' : '')} onClick=${() => setPos(x, y, true)}><span></span></button>`)}</div>
     <${Slider} label="Horizontal" value=${px} min=${0.1} max=${0.9} step=${0.005} format=${pct} onInput=${v => setPos(v, null)} />
     <${Slider} label="Vertical" value=${py} min=${0.08} max=${0.92} step=${0.005} format=${pct} onInput=${v => setPos(null, v)} />
     <div class="row" style="justify-content:center;gap:4px">
@@ -146,7 +146,7 @@ function PosTab({ st, scope }) {
       <${Btn} cls="icon sm" title="Derecha" onClick=${() => setPos(clamp(px + 0.01, 0.05, 0.95), null)}><${Icon} name="chevronRight" /></${Btn}>
       ${scope !== 'all' && (gs?.posY !== undefined || gs?.posX !== undefined) && html`<${Btn} cls="sm ghost" onClick=${() => A.setGroupStyle(scope, { posX: null, posY: null })}>Posición general</${Btn}>`}
     </div>
-    <div class="dim small">También puedes arrastrar el texto directamente en la vista previa. Siempre se mantiene dentro de la zona segura.</div>
+    <div class="dim small">Arrastra el texto directamente en el reproductor: el imán lo centra o lo pega a los márgenes seguros según su alineación (mantén Alt para moverlo sin imán). Doble clic para cambiar el texto.</div>
     ${scope === 'all'
       ? html`<${Toggle} label="Texto detrás de la persona" sub="La persona tapa el texto (IA)" value=${p.captions.behind} onChange=${v => update(pp => { pp.captions.behind = v; })} />
              <${Toggle} label="Evitar tapar la cara" value=${p.captions.avoidFace} onChange=${v => update(pp => { pp.captions.avoidFace = v; })} />`
@@ -159,7 +159,8 @@ export function CaptionStyleEditor() {
   const p = state.project, ui = state.ui;
   const sel = ui.sel?.type === 'group' ? ui.sel.id : null;
   const [tab, setTab] = useState('text');
-  const [scopeMode, setScopeMode] = useState('all');
+  const scopeMode = ui.capScope || 'all';
+  const setScopeMode = (v) => setUI({ capScope: v });
   const scope = sel && scopeMode === 'group' ? sel : 'all';
   const g = sel ? captionGroups(p, projectVersion).find(x => x.id === sel) : null;
   const st = resolveStyle(p.captions, scope === 'all' ? null : g?.ov);
@@ -176,9 +177,12 @@ export function CaptionStyleEditor() {
     const full = resolveStyle(p.captions, scope === 'all' ? null : g?.ov);
     full.font.size /= (p.captions.size || 1) * (g?.ov?.size || 1);
     const t = { ...full, id: 'user_' + uid('t'), name, ref: 'Plantilla guardada', cat: 'Mis plantillas', words: p.captions.wordsPerGroup, maxChars: p.captions.maxChars };
-    delete t.behind; delete t.hidden; delete t.posX;
+    // la plantilla guarda también la posición (X/Y)
+    t.posX = scope === 'all' ? (p.captions.posX ?? 0.5) : (g?.ov?.posX ?? p.captions.posX ?? 0.5);
+    t.posY = scope === 'all' ? p.captions.posY : (g?.ov?.posY ?? p.captions.posY);
+    delete t.behind; delete t.hidden; delete t.ownPos; delete t.freePos;
     saveUserTemplate(t);
-    update(pp => { pp.captions.template = t.id; pp.captions.style = {}; });
+    update(pp => { pp.captions.template = t.id; pp.captions.style = {}; pp.captions.posX = t.posX; pp.captions.posY = t.posY; });
     setNaming(null);
     toast('Plantilla guardada en “Mis plantillas”');
   };

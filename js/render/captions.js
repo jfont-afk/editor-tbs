@@ -60,6 +60,8 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
     g.items.forEach((x, i) => { const n = x.w.text.replace(/[^\p{L}\p{N}]/gu, '').length; if (n > best) { best = n; autoBig = i; } });
     if (best < 3) autoBig = -1;
   }
+  // saltos de línea puestos a mano (doble clic en el texto → Intro)
+  const forced = g.items.reduce((n, x, i) => n + (i > 0 && x.w.nl ? 1 : 0), 0);
   for (let attempt = 0; attempt < 12; attempt++) {
     items = g.items.map((it, i) => {
       const wf = wordFont(st, i === autoBig ? 1 : (it.w.hl | 0));
@@ -80,27 +82,27 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
     if (st.layout === 'stack') {
       let cur = null;
       for (const x of items) {
-        if (cur && cur.items.length === 1 && cur.items[0].text.length <= 2 && cur.w + space + x.w <= maxW) { cur.items.push(x); cur.w += space + x.w; continue; }
+        if (cur && !x.it.w.nl && cur.items.length === 1 && cur.items[0].text.length <= 2 && cur.w + space + x.w <= maxW) { cur.items.push(x); cur.w += space + x.w; continue; }
         cur = { items: [x], w: x.w }; lines.push(cur);
       }
     } else if (st.layout === 'hier') {
       // palabras grandes en su propia línea; las pequeñas se agrupan
       for (const x of items) {
         const last = lines[lines.length - 1];
-        if (x.big || !last || last.big || last.w + space + x.w > maxW * 0.8) lines.push({ items: [x], w: x.w, big: x.big });
+        if (x.big || !last || last.big || x.it.w.nl || last.w + space + x.w > maxW * 0.8) lines.push({ items: [x], w: x.w, big: x.big });
         else push(x);
       }
     } else {
       let cur = { items: [], w: 0 };
       for (const x of items) {
         const add = cur.items.length ? space + x.w : x.w;
-        if (cur.items.length && cur.w + add > maxW) { lines.push(cur); cur = { items: [x], w: x.w }; }
+        if (cur.items.length && (x.it.w.nl || cur.w + add > maxW)) { lines.push(cur); cur = { items: [x], w: x.w }; }
         else { cur.items.push(x); cur.w += add; }
       }
       if (cur.items.length) lines.push(cur);
     }
     // Escalonado: siempre en dos líneas si hay al menos dos palabras
-    if (st.layout === 'stagger' && lines.length === 1 && items.length >= 2) {
+    if (st.layout === 'stagger' && !forced && lines.length === 1 && items.length >= 2) {
       const half = Math.ceil(items.length / 2);
       const a = items.slice(0, half), b = items.slice(half);
       const wsum = (arr) => arr.reduce((s, x) => s + x.w, 0) + space * (arr.length - 1);
@@ -108,7 +110,7 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
     }
     for (const l of lines) l.space = space;
     const tooWide = lines.some(l => l.w > maxW + 0.5);
-    const limit = st.layout === 'hier' || st.layout === 'stack' ? Math.max(maxLines, 4) : maxLines;
+    const limit = Math.max(st.layout === 'hier' || st.layout === 'stack' ? Math.max(maxLines, 4) : maxLines, forced + 1);
     if (lines.length <= limit && !tooWide) break;
     fs *= 0.9;
   }
@@ -141,11 +143,12 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
   const padY = box && box.mode === 'block' ? (box.padY ?? 10) * u : 0;
   let cx = (st.posX ?? 0.5) * W;
   let cy = (posYOverride ?? st.posY) * H;
-  // Mantener dentro de la zona segura
-  const top = safe.y + padY, bottom = safe.y + safe.h - padY;
+  // Mantener dentro de la zona segura (o solo dentro del encuadre si se ha colocado a mano)
+  const area = st.freePos ? { x: 0, y: 0, w: W, h: H } : safe;
+  const top = area.y + padY, bottom = area.y + area.h - padY;
   if (cy - bh / 2 < top) cy = top + bh / 2;
   if (cy + bh / 2 > bottom) cy = Math.max(top + bh / 2, bottom - bh / 2);
-  const left = safe.x + padX, right = safe.x + safe.w - padX;
+  const left = area.x + padX, right = area.x + area.w - padX;
   if (cx - bw / 2 < left) cx = left + bw / 2;
   if (cx + bw / 2 > right) cx = Math.max(left + bw / 2, right - bw / 2);
   let y = cy - bh / 2;
@@ -192,8 +195,10 @@ function drawWordText(ctx, x, it, color, st, u, opts, glowMul = 1, ls) {
     ctx.strokeText(text, x, it.base);
     ctx.restore();
   }
-  const sh = shadowOf(st, opts.boost && !st.box?.on);
-  if (opts.boost && !st.box?.on && !st.stroke?.on) {
+  // la legibilidad automática solo refuerza la sombra si está activada (si la quitas, no vuelve)
+  const boost = opts.boost && !st.box?.on && !!st.shadow?.on;
+  const sh = shadowOf(st, boost);
+  if (boost && !st.stroke?.on) {
     // fondo claro: contorno oscuro suave para separar el texto
     ctx.save();
     ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(2, it.size * 0.07);
@@ -443,7 +448,7 @@ export function regionLuma(probeCtx, probeW, probeH, W, H, r) {
 }
 
 export function needsBoost(st, luma) {
-  if (st.box?.on) return false;
+  if (st.box?.on || !st.shadow?.on) return false;
   const textL = luminance(st.color);
   if (textL > 0.55) return luma.mean > 0.48 || (luma.mean > 0.33 && luma.std > 0.2);
   return false;

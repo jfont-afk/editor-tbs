@@ -24,7 +24,7 @@ export const defaultCaptions = () => ({
 
 export const defaultColor = () => ({
   preset: 'none', exposure: 0, contrast: 0, saturation: 0, vibrance: 0, temperature: 0, tint: 0,
-  highlights: 0, shadows: 0, fade: 0, vignette: 0, grain: 0, sharpen: 0,
+  highlights: 0, shadows: 0, fade: 0, vignette: 0, grain: 0, sharpen: 0, chroma: 0,
 });
 
 export function newProject() {
@@ -63,6 +63,10 @@ export const state = {
     silencePreview: null,       // [{start,end}] en tiempo de línea de tiempo
     wordSel: [],                // ids de palabras seleccionadas en la transcripción
     restore: null,              // proyecto guardado pendiente de recuperar
+    capScope: 'all',            // al mover/editar estilo de subtítulos: 'all' (todos) | 'group' (solo el bloque)
+    snap: true,                 // imán al arrastrar (centro y márgenes seguros)
+    editCap: null,              // id del bloque que se está editando con doble clic
+    editOv: null,               // id del texto libre / motion que se está escribiendo en el reproductor
   },
 };
 

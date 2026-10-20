@@ -9,21 +9,28 @@ function loadMediabunny() {
 }
 import { captionGroups } from '../core/captions.js';
 import { Compositor } from '../render/compositor.js';
+import { preloadOverlayImages } from '../render/motions.js';
+import { normalizeForSocial } from './loudness.js';
 
 const VIDEO_CODECS = ['avc1.640033', 'avc1.640028', 'avc1.4d0033', 'avc1.4d0028', 'avc1.42e033', 'avc1.42e028'];
 
 async function pickVideoConfig(W, H, fps, bitrate) {
   for (const codec of VIDEO_CODECS) {
-    const cfg = { codec, width: W, height: H, bitrate, framerate: fps, latencyMode: 'quality', avc: { format: 'avc' } };
-    try { const s = await VideoEncoder.isConfigSupported(cfg); if (s.supported) return cfg; } catch {}
+    for (const bitrateMode of ['variable', undefined]) {
+      const cfg = { codec, width: W, height: H, bitrate, framerate: fps, latencyMode: 'quality', avc: { format: 'avc' }, ...(bitrateMode ? { bitrateMode } : {}) };
+      try { const s = await VideoEncoder.isConfigSupported(cfg); if (s.supported) return cfg; } catch {}
+    }
   }
   throw new Error('Este navegador no puede codificar H.264. Usa Google Chrome actualizado.');
 }
 
+// AAC a la máxima calidad que admita el navegador (las redes recomiendan AAC 48 kHz)
 async function pickAudioConfig(sampleRate) {
   const opts = [
+    { codec: 'mp4a.40.2', mux: 'aac', sampleRate, numberOfChannels: 2, bitrate: 320000 },
+    { codec: 'mp4a.40.2', mux: 'aac', sampleRate, numberOfChannels: 2, bitrate: 256000 },
     { codec: 'mp4a.40.2', mux: 'aac', sampleRate, numberOfChannels: 2, bitrate: 192000 },
-    { codec: 'opus', mux: 'opus', sampleRate: 48000, numberOfChannels: 2, bitrate: 160000 },
+    { codec: 'opus', mux: 'opus', sampleRate: 48000, numberOfChannels: 2, bitrate: 192000 },
   ];
   for (const o of opts) {
     try { const s = await AudioEncoder.isConfigSupported({ codec: o.codec, sampleRate: o.sampleRate, numberOfChannels: 2, bitrate: o.bitrate }); if (s.supported) return o; } catch {}
@@ -45,12 +52,26 @@ export async function mixAudio(p, sr = 48000) {
   let t = 0;
   for (const c of p.clips) {
     const d = clipDur(c);
-    const buf = decoded.get(c.assetId);
+    let buf = decoded.get(c.assetId);
     const vol = p.muted ? 0 : (c.volume ?? 1);
+    const sp = c.speed || 1;
     if (buf && vol > 0.001) {
       const src = ctx.createBufferSource();
+      if (Math.abs(sp - 1) > 0.01) {
+        // velocidad distinta de 1: se estira el audio sin cambiar el tono de la voz
+        buf = timeStretch(ctx, buf, c.in, c.out, sp);
+        src.buffer = buf;
+        const g = ctx.createGain();
+        const f = Math.min(0.008, d / 4);
+        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + f);
+        g.gain.setValueAtTime(vol, Math.max(t + f, t + d - f)); g.gain.linearRampToValueAtTime(0, t + d);
+        src.connect(g).connect(ctx.destination);
+        src.start(t, 0, d);
+        t += d;
+        continue;
+      }
       src.buffer = buf;
-      src.playbackRate.value = c.speed || 1;
+      src.playbackRate.value = 1;
       const g = ctx.createGain();
       const f = Math.min(0.008, d / 4);
       g.gain.setValueAtTime(0, t);
@@ -63,6 +84,50 @@ export async function mixAudio(p, sr = 48000) {
     t += d;
   }
   return ctx.startRendering();
+}
+
+/**
+ * Cambio de velocidad conservando el tono (WSOLA): se solapan trozos del audio original
+ * buscando en cada paso el punto que mejor encaja con el anterior.
+ */
+function timeStretch(ctx, buf, t0, t1, speed) {
+  const sr = buf.sampleRate, nch = buf.numberOfChannels;
+  const s0 = Math.max(0, Math.floor(t0 * sr)), s1 = Math.min(buf.length, Math.ceil(t1 * sr));
+  const inLen = Math.max(0, s1 - s0);
+  const outLen = Math.max(1, Math.round(inLen / speed));
+  const N = 1536, Ho = N / 2, Hi = Ho * speed, delta = 320;
+  const win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+  const chans = [];
+  for (let c = 0; c < nch; c++) chans.push(buf.getChannelData(c).subarray(s0, s1));
+  const mono = new Float32Array(inLen);
+  for (const ch of chans) for (let i = 0; i < inLen; i++) mono[i] += ch[i] / nch;
+  const out = ctx.createBuffer(nch, outLen, sr);
+  const outs = []; for (let c = 0; c < nch; c++) outs.push(out.getChannelData(c));
+  let prev = 0;
+  for (let k = 0; k * Ho < outLen; k++) {
+    const ideal = Math.round(k * Hi);
+    let best = ideal;
+    if (k > 0) {
+      const nat = prev + Ho; // continuación natural del trozo anterior
+      let bestC = -Infinity;
+      for (let d = -delta; d <= delta; d += 2) {
+        const pos = ideal + d;
+        if (pos < 0 || pos + N > inLen || nat + N > inLen) continue;
+        let cc = 0;
+        for (let i = 0; i < N; i += 4) cc += mono[pos + i] * mono[nat + i];
+        if (cc > bestC) { bestC = cc; best = pos; }
+      }
+    }
+    best = Math.max(0, Math.min(best, inLen - 1));
+    const o = k * Ho;
+    for (let c = 0; c < nch; c++) {
+      const src = chans[c], dst = outs[c];
+      for (let i = 0; i < N && o + i < outLen && best + i < inLen; i++) dst[o + i] += src[best + i] * win[i];
+    }
+    prev = best;
+  }
+  return out;
 }
 
 function waitSeek(el, time) {
@@ -91,6 +156,15 @@ export async function exportMP4(opts) {
 
   onProgress?.(0, null, 'Mezclando audio…');
   const audio = await mixAudio(p, 48000);
+  let loud = null;
+  if (opts.normalize !== false && audio.length > 48000 * 0.5) {
+    onProgress?.(0.005, null, 'Ajustando el volumen para redes…');
+    await new Promise(r => setTimeout(r, 20));
+    const chs = [];
+    for (let c = 0; c < audio.numberOfChannels; c++) chs.push(audio.getChannelData(c));
+    loud = normalizeForSocial(chs, 48000, opts.lufs ?? -14);
+  }
+  await preloadOverlayImages(p);
   const vcfg = await pickVideoConfig(W, H, fps, bitrate);
   const acfg = await pickAudioConfig(48000);
 
@@ -124,14 +198,17 @@ export async function exportMP4(opts) {
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d', { alpha: false });
+  ctx.imageSmoothingQuality = 'high';
   const groups = captionGroups(p, version);
+  // se decodifica por encima de la resolución final para que los zooms y el reencuadre sigan nítidos
+  const srcCap = Math.round(Math.max(W, H) * 1.5);
 
   const t0 = performance.now();
   let i = 0;
   const encodeFrame = async (t, src) => {
     if (signal?.aborted) throw new DOMException('Cancelado', 'AbortError');
     if (encErr) throw encErr;
-    comp.render(ctx, W, H, t, src, { project: p, version, groups, total, safeZone, compare: false, editing: false, maxDim: Math.max(W, H) });
+    comp.render(ctx, W, H, t, src, { project: p, version, groups, total, safeZone, compare: false, editing: false, maxDim: srcCap });
     const frame = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
     venc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
     frame.close();
@@ -156,7 +233,7 @@ export async function exportMP4(opts) {
       const track = await input.getPrimaryVideoTrack();
       if (track && await track.canDecode()) {
         const sw = track.displayWidth, sh = track.displayHeight;
-        const k = Math.min(1, 1920 / Math.max(sw, sh));
+        const k = Math.min(1, srcCap / Math.max(sw, sh));
         s = new MB.CanvasSink(track, { width: Math.round(sw * k / 2) * 2, height: Math.round(sh * k / 2) * 2, fit: 'fill', poolSize: 3 });
       }
     } catch (e) { console.warn('mediabunny no disponible para', asset.name, e); }
@@ -225,5 +302,7 @@ export async function exportMP4(opts) {
   muxer.finalize();
   for (const el of els.values()) if (el instanceof HTMLVideoElement) { el.removeAttribute('src'); el.load(); }
   onProgress?.(1, 0, 'Listo');
-  return new Blob([target.buffer], { type: 'video/mp4' });
+  const blob = new Blob([target.buffer], { type: 'video/mp4' });
+  blob.info = { W, H, fps, bitrate, audio: acfg ? `${acfg.mux.toUpperCase()} ${Math.round(acfg.bitrate / 1000)} kbps` : 'sin audio', loud };
+  return blob;
 }

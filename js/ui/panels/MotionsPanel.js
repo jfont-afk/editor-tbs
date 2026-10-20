@@ -6,7 +6,7 @@ import * as A from '../../core/actions.js';
 import { C } from '../../data/brand.js';
 
 const cache = new Map();
-function motionPreview(id) {
+export function motionPreview(id) {
   if (cache.has(id)) return cache.get(id);
   const M = MOTIONS[id];
   const W = 480, H = 270;
@@ -49,7 +49,7 @@ export function MotionsPanel() {
   return html`
     <div class="panel-head">
       <h2 class="panel-title">Motions</h2>
-      <p class="panel-desc">Toca un elemento para añadirlo en el cursor. Después muévelo en la vista previa y edítalo a la derecha.</p>
+      <p class="panel-desc">Toca un elemento para añadirlo en el cursor. Arrástralo en el reproductor (con imán) y edítalo a la derecha. Todos pueden ir detrás de la persona.</p>
     </div>
     <div class="panel-body">
       ${!p.clips.length && html`<div class="note" style="margin-bottom:10px">Importa un vídeo primero.</div>`}

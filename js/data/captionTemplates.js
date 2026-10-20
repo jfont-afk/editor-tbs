@@ -205,19 +205,25 @@ export const TEMPLATE_CATS = ['Limpio', 'Creadores', 'Energía', 'Títulos', 'Co
 
 // Plantillas guardadas por el usuario
 const USER_KEY = 'tbs-user-templates';
+let userCache = null; // se lee una vez (getTemplate se llama en cada fotograma)
 export function userTemplates() {
-  try { return JSON.parse(localStorage.getItem(USER_KEY) || '[]').map(normalizeTemplate); } catch { return []; }
+  if (userCache) return userCache;
+  try { userCache = JSON.parse(localStorage.getItem(USER_KEY) || '[]').map(normalizeTemplate); } catch { userCache = []; }
+  return userCache;
+}
+function storeUser(list) {
+  userCache = null;
+  try { localStorage.setItem(USER_KEY, JSON.stringify(list)); } catch {}
 }
 export function saveUserTemplate(t) {
   const list = userTemplates().filter(x => x.id !== t.id);
-  list.push({ ...t, cat: 'Mis plantillas' });
-  try { localStorage.setItem(USER_KEY, JSON.stringify(list)); } catch {}
+  list.push({ ...t, cat: 'Mis plantillas', user: true });
+  storeUser(list);
 }
-export function deleteUserTemplate(id) {
-  try { localStorage.setItem(USER_KEY, JSON.stringify(userTemplates().filter(x => x.id !== id))); } catch {}
-}
+export function deleteUserTemplate(id) { storeUser(userTemplates().filter(x => x.id !== id)); }
 export const allTemplates = () => [...CAPTION_TEMPLATES, ...userTemplates()];
-export const getTemplate = (id) => allTemplates().find(t => t.id === id) || CAPTION_TEMPLATES[0];
+const byId = new Map(CAPTION_TEMPLATES.map(t => [t.id, t]));
+export const getTemplate = (id) => byId.get(id) || userTemplates().find(t => t.id === id) || CAPTION_TEMPLATES[0];
 
 export const ANIMS = [
   { id: 'none', name: 'Sin animación' }, { id: 'fade', name: 'Fundido' }, { id: 'blurIn', name: 'Desenfoque suave' },

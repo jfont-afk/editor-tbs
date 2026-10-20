@@ -20,6 +20,25 @@ export const TRANSITIONS = [
 
 const mk = (w = 2, h = 2) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
 
+// Curvas de aceleración del zoom (como en DaVinci: lineal, suave, acelera, frena…)
+export const ZOOM_CURVES = {
+  suave: { name: 'Suave', f: ease.inOutCubic },
+  lineal: { name: 'Lineal', f: (x) => x },
+  acelera: { name: 'Acelera', f: (x) => x * x * x },
+  frena: { name: 'Frena', f: ease.outCubic },
+  rapido: { name: 'Explosivo', f: ease.outExpo },
+  rebote: { name: 'Rebote', f: (x) => ease.outBack(x, 1.7) },
+};
+export const ZOOM_FROM = { x: 0.5, y: 0.5, s: 1 }, ZOOM_TO = { x: 0.5, y: 0.4, s: 1.45 };
+// Progreso 0..1 del zoom según velocidad y curva
+export function zoomProgress(P, lt, d) {
+  const mode = P.mode || 'in';
+  const sp = P.speed || (mode === 'golpe' ? 'rapido' : 'lento');
+  const dur = sp === 'rapido' ? Math.min(0.28, d) : sp === 'normal' ? Math.min(1, d) : d;
+  const curve = (ZOOM_CURVES[P.curve] || ZOOM_CURVES[mode === 'golpe' ? 'frena' : 'suave']).f;
+  return curve(clamp(lt / Math.max(0.05, dur), 0, 1));
+}
+
 export class Compositor {
   constructor() {
     this.gl = new ColorGL();
@@ -64,18 +83,24 @@ export class Compositor {
     return this.zoomMemo.map.get(clipId) || 1;
   }
 
-  cameraZoom(p, t) {
-    let z = 1, ax = 0.5, ay = 0.42;
+  // Zooms de cámara (pestaña Efectos). skipId: zoom dinámico que se está editando (se ve sin aplicar).
+  cameraZoom(p, t, skipId = null) {
+    let z = 1, ax = 0.5, ay = 0.42, win = null, follow = false;
     for (const o of (p.overlaysHidden ? [] : p.overlays)) {
-      if (o.type !== 'zoom' || t < o.start || t >= o.start + o.dur) continue;
-      const lt = t - o.start, d = o.dur, A = o.props.amount || 1.2;
-      let k;
-      if (o.props.mode === 'golpe') k = ease.outCubic(clamp(lt / 0.12, 0, 1));
-      else if (o.props.mode === 'respira') k = Math.sin(Math.PI * clamp(lt / d, 0, 1));
-      else k = ease.inOutCubic(clamp(lt / d, 0, 1));
-      z *= 1 + (A - 1) * k; ax = o.x; ay = o.y;
+      if (o.type !== 'zoom' || t < o.start || t >= o.start + o.dur || o.id === skipId) continue;
+      const P = o.props, lt = t - o.start;
+      const k = zoomProgress(P, lt, o.dur);
+      const mode = P.mode || 'in';
+      if (mode === 'dinamico') {
+        const a = P.from || ZOOM_FROM, b = P.to || ZOOM_TO;
+        win = { cx: a.x + (b.x - a.x) * k, cy: a.y + (b.y - a.y) * k, s: a.s + (b.s - a.s) * k };
+        continue;
+      }
+      const A = P.amount || 1.25;
+      const amt = mode === 'out' ? A + (1 - A) * k : mode === 'respira' ? 1 + (A - 1) * Math.sin(Math.PI * clamp(lt / o.dur, 0, 1)) : 1 + (A - 1) * k;
+      z *= amt; ax = o.x; ay = o.y; follow = follow || !!P.follow;
     }
-    return { z, ax, ay };
+    return { z, ax, ay, win, follow };
   }
 
   /**
@@ -89,6 +114,7 @@ export class Compositor {
     const safe = safeRect({ id: p.format.id, w: W, h: H }, o.safeZone || 'tiktok');
     this.ensure(this.base, W, H);
     const b = this.bctx;
+    b.imageSmoothingQuality = 'high'; // escalado de máxima calidad (nitidez al reducir 4K → 1080)
     b.setTransform(1, 0, 0, 1, 0, 0);
     b.globalAlpha = 1; b.filter = 'none';
     b.fillStyle = '#000'; b.fillRect(0, 0, W, H);
@@ -109,7 +135,7 @@ export class Compositor {
         const lt = t - hit.start;
         let z = (clip.zoom || 1) * this.autoZoomFor(p, o.version, clip.id);
         if (asset.kind === 'image') z *= 1 + 0.06 * clamp(lt / Math.max(0.5, hit.dur), 0, 1);
-        const cam = this.cameraZoom(p, t);
+        const cam = this.cameraZoom(p, t, o.camEdit);
         z *= cam.z;
         let dx = 0, blurPx = 0, flash = 0, dip = 0;
         const tr = clip.transition;
@@ -145,12 +171,25 @@ export class Compositor {
         // Auto-encuadre de la cabeza
         const rf = fit === 'cover' && clip.reframe ? clip.reframe : null;
         const track = rf ? p.faceTracks?.[asset.id] : null;
-        const fpos = track ? (rf.mode === 'follow' ? trackAt(track, hit.src) : trackMedian(track, clip.in, clip.out, `${clip.id}|${clip.in}|${clip.out}`)) : null;
+        let fpos = track ? (rf.mode === 'follow' ? trackAt(track, hit.src) : trackMedian(track, clip.in, clip.out, `${clip.id}|${clip.in}|${clip.out}`)) : null;
+        if (fpos && clip.flipX) fpos = [1 - fpos[0], ...fpos.slice(1)];
         if (fpos) {
           const R = reframeRect(W, H, w, h, fpos[0], fpos[1], rf.x ?? 0.5, rf.y ?? 0.32, rf.maxZoom || 1.8, clip.zoom || 1);
           x = R.x; y = R.y; w = R.w; h = R.h;
           z /= (clip.zoom || 1); // el zoom del clip ya se ha usado como mínimo
           if (cam.z === 1) { ax = (rf.x ?? 0.5) * W; ay = (rf.y ?? 0.32) * H; }
+        }
+        // Zoom que sigue la cara: el punto fijo del zoom es la cabeza
+        if (cam.follow && cam.z !== 1) {
+          const ft = p.faceTracks?.[asset.id];
+          const fp = ft ? trackAt(ft, hit.src) : null;
+          if (fp) { ax = x + (clip.flipX ? 1 - fp[0] : fp[0]) * w; ay = y + fp[1] * h; }
+        }
+        // Zoom dinámico: ventana que va del marco inicial al final (sin bordes negros)
+        if (cam.win && fit === 'cover') {
+          const s = Math.max(1, cam.win.s);
+          const cx = clamp(cam.win.cx, 0.5 / s, 1 - 0.5 / s) * W, cy = clamp(cam.win.cy, 0.5 / s, 1 - 0.5 / s) * H;
+          x = (x - cx) * s + W / 2; y = (y - cy) * s + H / 2; w *= s; h *= s;
         }
         x = ax + (x - ax) * z; y = ay + (y - ay) * z; w *= z; h *= z;
         x += dx;
@@ -161,11 +200,12 @@ export class Compositor {
           b.restore();
         }
         if (blurPx > 0.5) b.filter = `blur(${blurPx.toFixed(1)}px)`;
-        b.drawImage(frame, x, y, w, h);
+        if (clip.flipX) { b.save(); b.translate(x + w / 2, 0); b.scale(-1, 1); b.drawImage(frame, -w / 2, y, w, h); b.restore(); }
+        else b.drawImage(frame, x, y, w, h);
         b.filter = 'none';
         if (flash > 0) { b.fillStyle = `rgba(255,255,255,${(flash * 0.95).toFixed(3)})`; b.fillRect(0, 0, W, H); }
         if (dip > 0) { b.fillStyle = `rgba(0,0,0,${dip.toFixed(3)})`; b.fillRect(0, 0, W, H); }
-        vr = { x, y, w, h, sw, sh };
+        vr = { x, y, w, h, sw, sh, flip: !!clip.flipX };
         info.vrect = vr;
       }
     }
@@ -213,7 +253,8 @@ export class Compositor {
       pc.drawImage(this.base, 0, 0);
       pc.globalCompositeOperation = 'destination-in';
       pc.filter = `blur(${Math.max(1, 2.5 * u).toFixed(1)}px)`;
-      pc.drawImage(mask, vr.x, vr.y, vr.w, vr.h);
+      if (vr.flip) { pc.save(); pc.translate(vr.x + vr.w / 2, 0); pc.scale(-1, 1); pc.drawImage(mask, -vr.w / 2, vr.y, vr.w, vr.h); pc.restore(); }
+      else pc.drawImage(mask, vr.x, vr.y, vr.w, vr.h);
       pc.filter = 'none';
       pc.globalCompositeOperation = 'source-over';
       ctx.drawImage(this.person, 0, 0);
@@ -234,11 +275,11 @@ export class Compositor {
       let posY = st.posY;
       let L = layoutCaption(ctx, g, st, env, posY);
       let final = true;
-      if (p.captions.avoidFace && src?.el && vr && !st.behind) {
+      if (p.captions.avoidFace && !st.ownPos && src?.el && vr && !st.behind) {
         const faces = facesAt(src.el, src.asset.id, src.hit.src);
         if (faces === null) final = false;
         else if (faces.length) {
-          const fr = faces.map(f => ({ x: vr.x + f.x * vr.w, y: vr.y + f.y * vr.h - f.h * vr.h * 0.25, w: f.w * vr.w, h: f.h * vr.h * 1.35 }));
+          const fr = faces.map(f => ({ x: vr.x + (vr.flip ? 1 - f.x - f.w : f.x) * vr.w, y: vr.y + f.y * vr.h - f.h * vr.h * 0.25, w: f.w * vr.w, h: f.h * vr.h * 1.35 }));
           const hit = (L) => fr.some(f => L.bx < f.x + f.w && L.bx + L.bw > f.x && L.by < f.y + f.h && L.by + L.bh > f.y);
           if (hit(L)) {
             const f = fr.reduce((a, c) => (c.w * c.h > a.w * a.h ? c : a));
@@ -252,7 +293,7 @@ export class Compositor {
         }
       }
       let boost = false;
-      if (p.captions.autoReadable && !st.box?.on) {
+      if (p.captions.autoReadable && !st.box?.on && st.shadow?.on) {
         const pr = this.probeCtx;
         pr.drawImage(this.base, 0, 0, this.probe.width, this.probe.height);
         boost = needsBoost(st, regionLuma(pr, this.probe.width, this.probe.height, env.W, env.H, { x: L.bx, y: L.by, w: L.bw, h: L.bh }));

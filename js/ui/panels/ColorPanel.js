@@ -68,10 +68,11 @@ export function ColorPanel() {
       </${Section}>
       <${Section} title="Ajustes" right=${html`<span class="row" style="gap:4px">
         <button class="chip" onClick=${() => { const s = player.frameSource(timeBus.t); if (!s) return; const a = autoColor(s.el); write(c => Object.assign(c, a)); toast('Ajuste automático aplicado'); }}>Auto</button>
-        <button class="chip" onClick=${() => write(c => Object.assign(c, defaultColor()))}>Restablecer</button></span>`}>
+        <button class="chip" onClick=${() => write(c => { const d = defaultColor(); for (const s of COLOR_SLIDERS) if (!s.fx) c[s.k] = d[s.k] || 0; })}>Restablecer</button></span>`}>
         <div class="stack">
-          ${COLOR_SLIDERS.map(s => html`<${Slider} key=${s.k} label=${s.name} value=${col[s.k] || 0} min=${s.min} max=${s.max} step=${s.step} center=${s.min < 0}
+          ${COLOR_SLIDERS.filter(s => !s.fx).map(s => html`<${Slider} key=${s.k} label=${s.name} value=${col[s.k] || 0} min=${s.min} max=${s.max} step=${s.step} center=${s.min < 0}
             format=${v => (v > 0 && s.min < 0 ? '+' : '') + Math.round(v * 100)} onInput=${v => write(c => { c[s.k] = v; }, 'col' + s.k + scope)} />`)}
+          <div class="dim small">Nitidez, ruido, aberración cromática y viñeta están en <a href="#" onClick=${e => { e.preventDefault(); setUI({ tab: 'effects' }); }}>Efectos</a>.</div>
           <${Btn} cls=${ui.compare ? 'on' : ''} icon="contrast" onClick=${() => setUI({ compare: !ui.compare })}>${ui.compare ? 'Viendo el original' : 'Comparar con el original'}</${Btn}>
           ${scope === 'all' && p.clips.some(c => c.color) && html`<${Btn} cls="sm ghost" onClick=${() => update(pp => pp.clips.forEach(c => { c.color = null; }))}>Quitar el color propio de todos los clips</${Btn}>`}
         </div>

@@ -1,4 +1,5 @@
 import { html } from '../lib.js';
+import { TBS_ICONS } from '../data/tbsIcons.js';
 
 // Trazos estilo Lucide (el set que usa el Design System de TBS), 24×24, stroke 2.
 export const ICONS = {
@@ -89,7 +90,26 @@ export const ICONS = {
   circleDashed: '<path d="M10.1 2.18a9.93 9.93 0 0 1 3.8 0"/><path d="M17.6 3.71a9.95 9.95 0 0 1 2.69 2.7"/><path d="M21.82 10.1a9.93 9.93 0 0 1 0 3.8"/><path d="M20.29 17.6a9.95 9.95 0 0 1-2.7 2.69"/><path d="M13.9 21.82a9.94 9.94 0 0 1-3.8 0"/><path d="M6.4 20.29a9.95 9.95 0 0 1-2.69-2.7"/><path d="M2.18 13.9a9.93 9.93 0 0 1 0-3.8"/><path d="M3.71 6.4a9.95 9.95 0 0 1 2.7-2.69"/>',
   strike: '<path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><path d="M4 12h16"/>',
   timer: '<path d="M10 2h4"/><path d="M12 14l3-3"/><circle cx="12" cy="14" r="8"/>',
+  pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>',
+  minus: '<path d="M5 12h14"/>',
+  arrowUp: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  bringFront: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
+  sendBack: '<rect x="3" y="3" width="13" height="13" rx="2"/><path d="M20 8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2"/>',
+  textSize: '<path d="M3 7V5h10v2"/><path d="M8 5v14"/><path d="M6 19h4"/><path d="M14 13v-1h7v1"/><path d="M17.5 12v7"/><path d="M16 19h3"/>',
+  reset: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  imagePlus: '<path d="M16 5h6"/><path d="M19 2v6"/><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/><circle cx="9" cy="9" r="2"/>',
+  textBox: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8"/><path d="M12 9v7"/>',
+  effects: '<path d="M12 3l1.9 5.8L20 10l-5 3.9L16.6 20 12 16.7 7.4 20 9 13.9 4 10l6.1-1.2z"/>',
 };
+
+// Icono oficial TBS para la interfaz (selectores de iconos de las motions)
+export function TbsIcon({ name, size, style }) {
+  const t = TBS_ICONS[name];
+  if (!t) return null;
+  const [w, h, sw, body] = t;
+  const s = size ? `width:${size}px;height:${size}px;` : '';
+  return html`<svg viewBox=${`${-(60 - w) / 2} ${-(60 - h) / 2} 60 60`} fill="none" stroke="currentColor" stroke-width=${sw} stroke-linecap="round" stroke-linejoin="round" style=${s + (style || '')} dangerouslySetInnerHTML=${{ __html: body }}></svg>`;
+}
 
 export function Icon({ name, size, style }) {
   const body = ICONS[name] || ICONS.info;
@@ -121,7 +141,46 @@ export function iconPaths(name) {
   return out;
 }
 
+// En el vídeo se usan los iconos oficiales del Brandkit TBS siempre que existan.
+const TBS_ALIAS = {
+  piggy: 'piggyBank', message: 'messageText', link: 'link2', pointer: 'pointerClick', list: 'listChecks', user: 'userRound', phone: 'smartphone',
+  users: 'team', chart: 'chartLine', bars: 'barChart', dollarSign: 'dollar', percentCircle: 'percent', check: null,
+};
+export const tbsIconFor = (name) => (name in TBS_ALIAS ? TBS_ALIAS[name] : TBS_ICONS[name] ? name : null);
+
+const tbsCache = new Map();
+function tbsPaths(key) {
+  if (tbsCache.has(key)) return tbsCache.get(key);
+  const [w, h, sw, src] = TBS_ICONS[key];
+  const out = { w, h, sw, list: [] };
+  const re = /<(path|circle|rect)([^>]*)\/>/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const a = {};
+    m[2].replace(/([a-z-]+)="([^"]*)"/g, (_, k, v) => { a[k] = v; });
+    const p = new Path2D();
+    if (m[1] === 'path') p.addPath(new Path2D(a.d));
+    else if (m[1] === 'circle') p.arc(+a.cx, +a.cy, +a.r, 0, Math.PI * 2);
+    else if (p.roundRect) p.roundRect(+a.x, +a.y, +a.width, +a.height, +(a.rx || 0)); else p.rect(+a.x, +a.y, +a.width, +a.height);
+    out.list.push(p);
+  }
+  tbsCache.set(key, out);
+  return out;
+}
+
 export function drawIcon(ctx, name, x, y, size, color, lineWidth = 2) {
+  const tk = tbsIconFor(name);
+  if (tk) {
+    const t = tbsPaths(tk);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(size / 60, size / 60);
+    ctx.translate((60 - t.w) / 2, (60 - t.h) / 2);
+    ctx.strokeStyle = color; ctx.lineWidth = t.sw * (lineWidth / 2); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const p of t.list) ctx.stroke(p);
+    ctx.restore();
+    return;
+  }
   const paths = iconPaths(name);
   ctx.save();
   ctx.translate(x, y);

@@ -1,10 +1,11 @@
 import { html, fmtDur, fmtTime, clamp } from '../lib.js';
 import { state, update, setUI, projectVersion } from '../core/store.js';
 import { Btn, Section, Slider, Toggle, Seg, Select, TextInput, NumberInput, Swatches } from './controls.js';
-import { Icon } from './icons.js';
+import { Icon, TbsIcon } from './icons.js';
+import { TBS_ICON_OPTIONS } from '../data/tbsIcons.js';
 import * as A from '../core/actions.js';
 import { MOTIONS } from '../render/motions.js';
-import { TRANSITIONS } from '../render/compositor.js';
+import { TRANSITIONS, ZOOM_CURVES } from '../render/compositor.js';
 import { CAPTION_TEMPLATES, ANIMS, REVEALS } from '../data/captionTemplates.js';
 import { captionGroups } from '../core/captions.js';
 import { clipStart, clipDur } from '../core/timeline.js';
@@ -41,8 +42,16 @@ function ClipInspector({ c }) {
           ${tr.type !== 'none' && html`<${Slider} label="Duración" value=${tr.dur} min=${0.1} max=${1} step=${0.05} format=${v => v.toFixed(2).replace('.', ',') + ' s'} onInput=${v => A.updateClip(c.id, { transition: { ...tr, dur: v } }, 'trd' + c.id)} />`}
         </div>
       </${Section}>
+      <${Section} title="Velocidad">
+        <div class="stack">
+          <${Seg} small value=${c.speed || 1} onChange=${v => A.updateClip(c.id, { speed: v })} options=${[[0.5, '0,5×'], [0.75, '0,75×'], [1, '1×'], [1.25, '1,25×'], [1.5, '1,5×'], [2, '2×']]} />
+          <${Slider} label="Personalizada" value=${c.speed || 1} min=${0.25} max=${3} step=${0.05} format=${v => v.toFixed(2).replace('.', ',') + '×'} onInput=${v => A.updateClip(c.id, { speed: v }, 'sp' + c.id)} />
+          <div class="dim small">La voz conserva su tono al exportar.</div>
+        </div>
+      </${Section}>
       <${Section} title="Encuadre">
         <div class="stack">
+          <${Toggle} label="Espejo" sub="Voltear en horizontal" value=${!!c.flipX} onChange=${v => A.updateClip(c.id, { flipX: v })} />
           <${Slider} label="Zoom" value=${c.zoom || 1} min=${1} max=${2.5} step=${0.01} format=${v => Math.round(v * 100) + '%'} onInput=${v => A.updateClip(c.id, { zoom: v }, 'z' + c.id)} />
           <${Slider} label="Horizontal" value=${c.cropX || 0} min=${-1} max=${1} step=${0.01} center format=${v => Math.round(v * 100)} onInput=${v => A.updateClip(c.id, { cropX: v }, 'cx' + c.id)} />
           <${Slider} label="Vertical" value=${c.cropY || 0} min=${-1} max=${1} step=${0.01} center format=${v => Math.round(v * 100)} onInput=${v => A.updateClip(c.id, { cropY: v }, 'cy' + c.id)} />
@@ -57,9 +66,18 @@ function ClipInspector({ c }) {
     </div>`;
 }
 
+// Mini gráfica de una curva de aceleración
+function CurveIcon({ f }) {
+  const pts = Array.from({ length: 21 }, (_, i) => { const x = i / 20; return `${(2 + x * 32).toFixed(1)},${(30 - clamp(f(x), -0.15, 1.15) * 26).toFixed(1)}`; }).join(' ');
+  return html`<svg viewBox="0 0 36 34" width="36" height="34"><polyline points=${pts} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
+}
+
 function Field({ f, o }) {
   const v = o.props[f.k];
   const set = (val) => A.updateOverlay(o.id, { props: { [f.k]: val } }, 'p' + o.id + f.k);
+  if (f.hide && f.hide(o.props)) return null;
+  if (f.type === 'curve') return html`<div class="field"><span class="field-label">${f.label}</span>
+    <div class="curve-grid">${Object.entries(ZOOM_CURVES).map(([k, c]) => html`<button class=${'curve-cell' + ((v || 'suave') === k ? ' on' : '')} title=${c.name} onClick=${() => set(k)}><${CurveIcon} f=${c.f} /><span>${c.name}</span></button>`)}</div></div>`;
   if (f.type === 'text') return html`<${TextInput} label=${f.label} value=${v ?? ''} onInput=${set} />`;
   if (f.type === 'textarea') return html`<${TextInput} label=${f.label} value=${v ?? ''} onInput=${set} multiline />`;
   if (f.type === 'select') return html`<${Select} label=${f.label} value=${v ?? ''} options=${f.options} onChange=${set} />`;
@@ -67,6 +85,11 @@ function Field({ f, o }) {
   if (f.type === 'number') return html`<${NumberInput} label=${f.label} value=${v} min=${f.min} max=${f.max} onInput=${set} />`;
   if (f.type === 'range') return html`<${Slider} label=${f.label} value=${v} min=${f.min} max=${f.max} step=${f.step} onInput=${set} />`;
   if (f.type === 'color') return html`<${Swatches} label=${f.label} value=${v} onChange=${set} />`;
+  if (f.type === 'icon') return html`<div class="field"><span class="field-label">${f.label}</span>
+    <div class="icon-grid">
+      ${f.allowNone && html`<button class=${'icon-cell' + (!v ? ' on' : '')} title="Ninguno" onClick=${() => set('')}><${Icon} name="x" /></button>`}
+      ${TBS_ICON_OPTIONS.map(([k, name]) => html`<button class=${'icon-cell' + (v === k ? ' on' : '')} title=${name} onClick=${() => set(k)}><${TbsIcon} name=${k} /></button>`)}
+    </div></div>`;
   return null;
 }
 
@@ -101,10 +124,13 @@ function OverlayInspector({ o }) {
           </div>
           <${Slider} label="Tamaño" value=${o.scale || 1} min=${0.2} max=${3} step=${0.01} format=${v => Math.round(v * 100) + '%'} onInput=${v => set({ scale: v }, 'sc' + o.id)} />
           <${Slider} label="Giro" value=${o.rot || 0} min=${-Math.PI} max=${Math.PI} step=${0.01} center format=${v => Math.round(v * 180 / Math.PI) + '°'} onInput=${v => set({ rot: v }, 'ro' + o.id)} />
-          <${Toggle} label="Detrás de la persona" sub="La persona tapa este elemento" value=${!!o.behind} onChange=${v => set({ behind: v })} />
+          <div class="dim small">Arrástralo directamente en el reproductor. El imán lo centra y lo pega a los márgenes seguros.</div>
         </div>
       </${Section}>`}
-      ${M.camera && html`<${Section} title="Centro del zoom"><div class="dim small">Arrastra el recuadro en la vista previa para elegir hacia dónde se acerca la cámara.</div></${Section}>`}
+      ${!M.camera && html`<${Toggle} label="Detrás de la persona" sub="Efecto sándwich: la persona tapa este elemento" value=${!!o.behind} onChange=${v => set({ behind: v })} />`}
+      ${M.camera && html`<${Section} title=${o.props.mode === 'dinamico' ? 'Marcos del zoom' : 'Centro del zoom'}><div class="dim small">${o.props.mode === 'dinamico'
+        ? 'En el reproductor verás el marco Inicio (blanco) y el Final (rojo): arrástralos y cambia su tamaño desde las esquinas. La cámara va de uno a otro con la curva elegida.'
+        : o.props.follow ? 'El zoom se centra en la cara y la sigue mientras habla.' : 'Arrastra el recuadro en la vista previa para elegir hacia dónde se acerca la cámara.'}</div></${Section}>`}
       ${!M.camera && !(M.full && M.animIn === 'none') && html`<${Section} title="Animación">
         <div class="grid2">
           <${Select} label="Entrada" value=${o.animIn ?? M.animIn} options=${OV_ANIMS} onChange=${v => set({ animIn: v })} />

@@ -59,6 +59,8 @@ export function groupWords(words, s) {
     g.fadeOut = !next || next.items[0].ts - g.end > 0.05;
     g.ov = g.items.find(x => x.w.gs)?.w.gs || null;
     g.text = g.items.map(x => x.w.text.trim()).join(' ');
+    // texto editable con los saltos de línea manuales
+    g.editText = g.items.map((x, k) => (k > 0 && x.w.nl ? '\n' : k > 0 ? ' ' : '') + x.w.text.trim()).join('');
   }
   return groups;
 }
@@ -110,6 +112,9 @@ export function resolveStyle(settings, ov) {
   deepMerge(st, ov?.style);
   st.posY = ov?.posY ?? (ov?.template ? tpl.posY : settings.posY);
   st.posX = ov?.posX ?? (ov?.template ? 0.5 : (settings.posX ?? 0.5));
+  // Posición elegida a mano: se respeta tal cual (sin recolocar por zona segura ni por la cara)
+  st.ownPos = ov?.posY !== undefined || ov?.posX !== undefined;
+  st.freePos = st.ownPos || !!settings.posFree;
   st.behind = ov?.behind ?? settings.behind;
   st.hidden = !!ov?.hidden;
   return st;

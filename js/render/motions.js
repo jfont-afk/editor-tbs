@@ -2,6 +2,8 @@ import { clamp } from '../lib.js';
 import { C, F, PALETTE } from '../data/brand.js';
 import { ease, rrect, withAlpha } from './anim.js';
 import { drawIcon } from '../ui/icons.js';
+import { drawLogo, logoWidth } from '../data/brandLogo.js';
+import { runtime } from '../core/store.js';
 
 // ---------- utilidades ----------
 const font = (w, size, fam, it = false) => `${it ? 'italic ' : ''}${w} ${size.toFixed(1)}px "${fam}"`;
@@ -66,6 +68,32 @@ function cursor(ctx, x, y, s, pressed) {
   ctx.shadowColor = 'transparent';
   ctx.lineWidth = 2.2; ctx.strokeStyle = C.n900; ctx.lineJoin = 'round'; ctx.stroke(p);
   ctx.restore();
+}
+
+// Imágenes de las capas "Imagen" (se cargan una vez; al terminar se redibuja)
+export const imageHooks = { onLoad: null };
+const imgCache = new Map();
+export function overlayImage(assetId) {
+  const url = assetId && runtime.assets.get(assetId)?.url;
+  if (!url) return null;
+  let e = imgCache.get(url);
+  if (!e) {
+    e = { img: new Image(), ok: false };
+    e.img.onload = () => { e.ok = true; imageHooks.onLoad && imageHooks.onLoad(); };
+    e.img.src = url;
+    imgCache.set(url, e);
+  }
+  return e.ok ? e.img : null;
+}
+// Para exportar: espera a que estén cargadas todas las imágenes del proyecto
+export async function preloadOverlayImages(p) {
+  const ids = p.overlays.filter(o => o.type === 'imagen' && o.props.assetId).map(o => o.props.assetId);
+  await Promise.all(ids.map(id => new Promise(res => {
+    overlayImage(id);
+    const url = runtime.assets.get(id)?.url, e = url && imgCache.get(url);
+    if (!e || e.ok) return res();
+    e.img.decode().then(() => { e.ok = true; res(); }, res);
+  })));
 }
 
 // Generador pseudoaleatorio estable por motion
@@ -424,31 +452,69 @@ export const MOTIONS = {
   },
   texto: {
     name: 'Texto libre', cat: 'cartel', icon: 'type', dur: 3, y: 0.4, animIn: 'pop', animOut: 'fade',
-    props: { text: 'Escribe aquí', font: 'head', size: 80, color: 'white', upper: true, box: 'none' },
-    fields: [{ k: 'text', label: 'Texto', type: 'textarea' }, { k: 'font', label: 'Tipografía', type: 'select', options: [['head', 'Space Grotesk'], ['body', 'Raleway'], ['serif', 'Playfair Display (itálica)'], ['script', 'Sacramento'], ['mono', 'Geist Mono']] }, { k: 'size', label: 'Tamaño', type: 'number', min: 24, max: 220 }, { k: 'color', label: 'Color', type: 'color' }, { k: 'upper', label: 'Mayúsculas', type: 'toggle' }, { k: 'box', label: 'Fondo', type: 'select', options: [['none', 'Sin fondo'], ['glass', 'Cristal'], ['dark', 'Oscuro'], ['fluor', 'Fluor'], ['magenta', 'Magenta']] }],
+    props: { text: 'Escribe *aquí*', font: 'head', size: 80, color: 'white', accent: 'fluor', upper: true, box: 'none', align: 'center', shadow: true, ls: -0.02 },
+    fields: [{ k: 'text', label: 'Texto (*palabra* = color de acento)', type: 'textarea' }, { k: 'accent', label: 'Color de acento', type: 'color' }, { k: 'font', label: 'Tipografía', type: 'select', options: [['head', 'Space Grotesk'], ['body', 'Raleway'], ['serif', 'Playfair Display (itálica)'], ['script', 'Sacramento'], ['mono', 'Geist Mono']] }, { k: 'size', label: 'Tamaño', type: 'range', min: 24, max: 260, step: 1 }, { k: 'color', label: 'Color', type: 'color' }, { k: 'upper', label: 'Mayúsculas', type: 'toggle' }, { k: 'align', label: 'Alineación', type: 'select', options: [['left', 'Izquierda'], ['center', 'Centro'], ['right', 'Derecha']] }, { k: 'ls', label: 'Interletrado', type: 'range', min: -0.1, max: 0.3, step: 0.005 }, { k: 'shadow', label: 'Sombra', type: 'toggle' }, { k: 'box', label: 'Fondo', type: 'select', options: [['none', 'Sin fondo'], ['glass', 'Cristal'], ['dark', 'Oscuro'], ['fluor', 'Fluor'], ['magenta', 'Magenta'], ['white', 'Blanco']] }],
     draw(ctx, o, lt, env) {
       const { u } = env; const P = o.props;
       const fam = { head: F.head, body: F.body, serif: F.serif, script: F.script, mono: F.mono }[P.font] || F.head;
       const w8 = P.font === 'script' ? 400 : P.font === 'serif' ? 600 : P.font === 'mono' ? 500 : 700;
       const fs = (P.size || 80) * u;
       const f = font(w8, fs, fam, P.font === 'serif');
+      const ls = (P.ls ?? (P.font === 'head' ? -0.02 : 0)) * fs;
       const lines = String(P.text || '').split('\n').map(l => P.upper ? l.toLocaleUpperCase('es-ES') : l);
       const lh = fs * 1.08;
-      const w = Math.max(...lines.map(l => measure(ctx, l, f, P.font === 'head' ? -0.02 * fs : 0)));
+      const ws = lines.map(l => measure(ctx, l.replace(/\*/g, ''), f, ls));
+      const w = Math.max(1, ...ws);
       const h = lh * lines.length;
       const pad = 26 * u;
       let col = hexOf(P.color);
       if (P.box === 'glass') glass(ctx, -w / 2 - pad, -h / 2 - pad * 0.6, w + pad * 2, h + pad * 1.2, 28 * u, u, env);
-      else if (P.box === 'dark' || P.box === 'fluor' || P.box === 'magenta') {
-        const T = TONES[P.box === 'dark' ? 'dark' : P.box];
+      else if (P.box && P.box !== 'none') {
+        const T = P.box === 'white' ? TONES.light : TONES[P.box === 'dark' ? 'dark' : P.box];
         rrect(ctx, -w / 2 - pad, -h / 2 - pad * 0.6, w + pad * 2, h + pad * 1.2, 18 * u); ctx.fillStyle = T.bg; ctx.fill();
         col = T.ink;
       }
       ctx.save();
-      if (P.box === 'none') { ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 22 * u; ctx.shadowOffsetY = 4 * u; }
-      lines.forEach((l, i) => text(ctx, l, 0, -h / 2 + lh * (i + 0.5) + fs * 0.04, f, col, 'center', P.font === 'head' ? -0.02 * fs : 0));
+      if ((!P.box || P.box === 'none') && P.shadow !== false) { ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 22 * u; ctx.shadowOffsetY = 4 * u; }
+      const al = P.align || 'center';
+      const acc = hexOf(P.accent || 'fluor');
+      // *palabra* = color de acento
+      lines.forEach((l, i) => {
+        const lw = ws[i], yy = -h / 2 + lh * (i + 0.5) + fs * 0.04;
+        let x = al === 'left' ? -w / 2 : al === 'right' ? w / 2 - lw : -lw / 2;
+        let on = false;
+        for (const part of l.split('*')) {
+          if (part) { text(ctx, part, x, yy, f, on ? acc : col, 'left', ls); x += measure(ctx, part, f, ls); }
+          on = !on;
+        }
+      });
       ctx.restore();
       return { w: w + pad * 2, h: h + pad * 1.2 };
+    },
+  },
+  imagen: {
+    // Imagen libre (logo, captura, foto…) añadida desde la pestaña Texto
+    name: 'Imagen', cat: 'texto', icon: 'image', dur: 4, y: 0.4, animIn: 'pop', animOut: 'fade',
+    props: { assetId: null, width: 560, radius: 28, shadow: true, border: false, opacity: 1 },
+    fields: [{ k: 'width', label: 'Ancho', type: 'range', min: 80, max: 1080, step: 10 }, { k: 'radius', label: 'Redondeo', type: 'range', min: 0, max: 300, step: 2 }, { k: 'opacity', label: 'Opacidad', type: 'range', min: 0.1, max: 1, step: 0.05 }, { k: 'shadow', label: 'Sombra', type: 'toggle' }, { k: 'border', label: 'Borde blanco', type: 'toggle' }],
+    draw(ctx, o, lt, env) {
+      const { u } = env; const P = o.props;
+      const img = overlayImage(P.assetId);
+      const w = (P.width || 560) * u;
+      const h = img ? w * img.height / img.width : w * 0.6;
+      const r = Math.min((P.radius ?? 28) * u, w / 2, h / 2);
+      ctx.save();
+      ctx.globalAlpha *= P.opacity ?? 1;
+      if (!img) {
+        rrect(ctx, -w / 2, -h / 2, w, h, r); ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fill();
+        drawIcon(ctx, 'image', -40 * u, -40 * u, 80 * u, 'rgba(255,255,255,0.7)', 2);
+        ctx.restore(); return { w, h };
+      }
+      if (P.shadow !== false) { ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 40 * u; ctx.shadowOffsetY = 14 * u; rrect(ctx, -w / 2, -h / 2, w, h, r); ctx.fillStyle = '#000'; ctx.fill(); ctx.restore(); }
+      ctx.save(); rrect(ctx, -w / 2, -h / 2, w, h, r); ctx.clip(); ctx.drawImage(img, -w / 2, -h / 2, w, h); ctx.restore();
+      if (P.border) { ctx.lineWidth = 8 * u; ctx.strokeStyle = '#fff'; rrect(ctx, -w / 2, -h / 2, w, h, r); ctx.stroke(); }
+      ctx.restore();
+      return { w, h };
     },
   },
 
@@ -545,25 +611,29 @@ export const MOTIONS = {
   },
   icono: {
     name: 'Icono TBS', cat: 'dato', icon: 'coins', dur: 3, y: 0.35, animIn: 'bounce', animOut: 'pop',
-    props: { icon: 'trendingUp', tone: 'yellow', icon2: 'euro', tone2: 'sky' },
-    fields: [{ k: 'icon', label: 'Icono', type: 'select', options: [['trendingUp', 'Sube'], ['trendingDown', 'Baja'], ['euro', 'Euro'], ['coins', 'Monedas'], ['wallet', 'Cartera'], ['piggy', 'Hucha'], ['chartLine', 'Gráfico'], ['graduation', 'Graduación'], ['lightbulb', 'Idea'], ['target', 'Objetivo'], ['shield', 'Escudo'], ['award', 'Premio'], ['video', 'Vídeo'], ['mic', 'Micro'], ['calendar', 'Calendario'], ['clock', 'Reloj']] }, { k: 'tone', label: 'Color', type: 'select', options: TONE_OPTS }, { k: 'icon2', label: 'Segundo icono', type: 'select', options: [['', 'Ninguno'], ['euro', 'Euro'], ['coins', 'Monedas'], ['trendingUp', 'Sube'], ['chartLine', 'Gráfico'], ['wallet', 'Cartera'], ['piggy', 'Hucha']] }, { k: 'tone2', label: 'Color 2', type: 'select', options: TONE_OPTS }],
+    // Como en las portadas de webinar TBS: discos de color con aro oscuro e icono blanco del Brandkit, solapados.
+    props: { icon: 'handCoins', tone: 'yellow', icon2: 'euro', tone2: 'sky', ring: 'dark' },
+    fields: [{ k: 'icon', label: 'Icono', type: 'icon' }, { k: 'tone', label: 'Color', type: 'select', options: TONE_OPTS }, { k: 'icon2', label: 'Segundo icono', type: 'icon', allowNone: true }, { k: 'tone2', label: 'Color 2', type: 'select', options: TONE_OPTS }, { k: 'ring', label: 'Aro', type: 'select', options: [['dark', 'Oscuro'], ['olive', 'Oliva TBS'], ['white', 'Blanco'], ['none', 'Sin aro']] }],
     draw(ctx, o, lt, env) {
       const { u } = env; const P = o.props;
       const R = 100 * u;
+      const ring = { dark: C.n900, olive: C.fluorInk, white: C.white }[P.ring || 'dark'];
       const disc = (cx, icon, tone, delay) => {
         const k = ease.outBack(clamp((lt - delay) / 0.45, 0, 1), 2);
         if (k <= 0) return;
         const T = TONES[tone] || TONES.yellow;
+        const light = ['fluor', 'light'].includes(tone);
         ctx.save(); ctx.translate(cx, 0); ctx.scale(k, k);
-        ctx.beginPath(); ctx.arc(0, 0, R + 16 * u, 0, Math.PI * 2); ctx.fillStyle = C.n900; ctx.fill();
+        if (ring) { ctx.beginPath(); ctx.arc(0, 0, R + 13 * u, 0, Math.PI * 2); ctx.fillStyle = ring; ctx.fill(); }
         ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fillStyle = T.bg; ctx.fill();
-        drawIcon(ctx, icon, -R * 0.6, -R * 0.6, R * 1.2, T.ink, 2.2);
+        drawIcon(ctx, icon, -R * 0.6, -R * 0.6, R * 1.2, light ? T.ink : C.white, 2);
         ctx.restore();
       };
       const two = !!P.icon2;
-      disc(two ? -R * 0.82 : 0, P.icon, P.tone, 0);
-      if (two) disc(R * 0.82, P.icon2, P.tone2, 0.15);
-      return { w: two ? R * 3.9 : R * 2.3, h: R * 2.3 };
+      const off = R * 0.9;
+      disc(two ? -off : 0, P.icon, P.tone, 0);
+      if (two) disc(off, P.icon2, P.tone2, 0.15);
+      return { w: two ? R * 4.1 : R * 2.3, h: R * 2.3 };
     },
   },
 
@@ -636,11 +706,18 @@ export const MOTIONS = {
     },
   },
   zoom: {
-    name: 'Zoom de cámara', cat: 'senal', icon: 'zoomIn', dur: 2, y: 0.42, animIn: 'none', animOut: 'none', camera: true,
-    props: { amount: 1.25, mode: 'suave' },
-    fields: [{ k: 'amount', label: 'Cantidad', type: 'range', min: 1.05, max: 2, step: 0.01 }, { k: 'mode', label: 'Tipo', type: 'select', options: [['suave', 'Acercamiento suave'], ['golpe', 'Golpe (punch-in)'], ['respira', 'Respiración']] }],
+    // Se añade desde la pestaña Efectos. mode: in | out | golpe | respira | dinamico
+    name: 'Zoom de cámara', cat: 'camara', icon: 'zoomIn', dur: 2, y: 0.42, animIn: 'none', animOut: 'none', camera: true,
+    props: { amount: 1.25, mode: 'in', speed: 'normal', curve: 'suave', follow: false },
+    fields: [
+      { k: 'mode', label: 'Tipo', type: 'select', options: [['in', 'Hacia dentro'], ['out', 'Hacia fuera'], ['golpe', 'Golpe (punch-in)'], ['respira', 'Respiración'], ['dinamico', 'Dinámico (marco inicial → final)']] },
+      { k: 'amount', label: 'Cantidad', type: 'range', min: 1.05, max: 2.5, step: 0.01, hide: (P) => P.mode === 'dinamico' },
+      { k: 'speed', label: 'Velocidad', type: 'select', options: [['rapido', 'Rápido'], ['normal', 'Normal'], ['lento', 'Lento (toda la duración)']] },
+      { k: 'curve', label: 'Curva de aceleración', type: 'curve' },
+      { k: 'follow', label: 'Seguir la cara', type: 'toggle', hide: (P) => P.mode === 'dinamico' },
+    ],
     draw(ctx, o, lt, env) {
-      if (!env.editing) return { w: 300 * env.u, h: 300 * env.u };
+      if (!env.editing || o.props.mode === 'dinamico' || o.props.follow) return { w: 300 * env.u, h: 300 * env.u };
       const { u } = env;
       ctx.save(); ctx.setLineDash([12 * u, 10 * u]); ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3 * u;
       ctx.strokeRect(-150 * u, -150 * u, 300 * u, 300 * u); ctx.restore();
@@ -668,22 +745,25 @@ export const MOTIONS = {
   },
   logo: {
     name: 'Logo', cat: 'efecto', icon: 'shield', dur: 9999, x: 0.5, y: 0.13, animIn: 'fade', animOut: 'fade',
-    props: { size: 1, opacity: 0.9 },
-    fields: [{ k: 'size', label: 'Tamaño', type: 'range', min: 0.4, max: 2.5, step: 0.05 }, { k: 'opacity', label: 'Opacidad', type: 'range', min: 0.2, max: 1, step: 0.05 }],
+    // Logotipo oficial del Brandkit (vectorial). Si se sube un logo propio en Medios, se usa ese.
+    props: { size: 1, opacity: 0.95, mode: 'full', color: 'white', mark: 'magenta' },
+    fields: [
+      { k: 'mode', label: 'Versión', type: 'select', options: [['full', 'Símbolo + traders'], ['mark', 'Solo símbolo']] },
+      { k: 'color', label: 'Color', type: 'color' }, { k: 'mark', label: 'Color del símbolo', type: 'color' },
+      { k: 'size', label: 'Tamaño', type: 'range', min: 0.4, max: 2.5, step: 0.05 }, { k: 'opacity', label: 'Opacidad', type: 'range', min: 0.2, max: 1, step: 0.05 }],
     draw(ctx, o, lt, env) {
-      const { u } = env; const s = o.props.size || 1;
-      ctx.save(); ctx.globalAlpha *= o.props.opacity ?? 0.9;
+      const { u } = env; const P = o.props; const s = P.size || 1;
+      ctx.save(); ctx.globalAlpha *= P.opacity ?? 0.95;
       if (env.logo) {
         const w = 300 * u * s; const h = w * env.logo.height / env.logo.width;
         ctx.drawImage(env.logo, -w / 2, -h / 2, w, h); ctx.restore();
         return { w, h };
       }
-      const f1 = font(700, 40 * u * s, F.head), f2 = font(500, 30 * u * s, F.serif, true);
-      ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 12 * u;
-      text(ctx, 'TRADERS', 0, -16 * u * s, f1, C.white, 'center', -1 * u);
-      text(ctx, 'Business School', 0, 22 * u * s, f2, C.white);
+      const h = 78 * u * s, mode = P.mode || 'full';
+      const w = logoWidth(h, mode);
+      drawLogo(ctx, -w / 2, -h / 2, h, hexOf(P.color || 'white'), mode, hexOf(P.mark || P.color || 'white'));
       ctx.restore();
-      return { w: 260 * u * s, h: 90 * u * s };
+      return { w, h };
     },
   },
   cuenta: {

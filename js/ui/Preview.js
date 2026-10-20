@@ -1,11 +1,13 @@
 import { html, useRef, useEffect, useState, useLayoutEffect, fmtTime, clamp } from '../lib.js';
-import { state, setUI, update, emit } from '../core/store.js';
+import { state, setUI, update, projectVersion } from '../core/store.js';
 import { player, timeBus } from '../engine/player.js';
 import { safeRect, SAFE_ZONES, FORMATS } from '../data/brand.js';
 import { Icon } from './icons.js';
 import { Btn } from './controls.js';
 import * as A from '../core/actions.js';
 import { MOTIONS } from '../render/motions.js';
+import { captionGroups, resolveStyle } from '../core/captions.js';
+import { ZOOM_FROM, ZOOM_TO } from '../render/compositor.js';
 
 function Timecode() {
   const [t, setT] = useState(timeBus.t);
@@ -18,7 +20,6 @@ function Duration() {
 
 function SafeOverlay({ p, ui, scale }) {
   if (!ui.showSafe) return null;
-  const W = p.format.w, H = p.format.h;
   const r = safeRect(p.format, ui.safeZone);
   const z = SAFE_ZONES[ui.safeZone];
   const s = scale;
@@ -37,31 +38,151 @@ function SafeOverlay({ p, ui, scale }) {
     </div>`}`;
 }
 
-function SelectionBox({ rect, scale, label, onDrag, onScale, onRotate, rot }) {
+// Imán: centra o pega el bloque a los márgenes seguros según su alineación. Todo en px del lienzo.
+function snapPos(cx, cy, w, h, W, H, safe, align) {
+  const th = Math.max(W, H) * 0.014;
+  const xs = [
+    { v: W / 2, line: W / 2, pri: align === 'center' ? 0 : 1 },
+    { v: safe.x + w / 2, line: safe.x, pri: align === 'left' ? 0 : 1 },
+    { v: safe.x + safe.w - w / 2, line: safe.x + safe.w, pri: align === 'right' ? 0 : 1 },
+  ];
+  const ys = [
+    { v: H / 2, line: H / 2, pri: 0 },
+    { v: safe.y + h / 2, line: safe.y, pri: 1 },
+    { v: safe.y + safe.h - h / 2, line: safe.y + safe.h, pri: 1 },
+  ];
+  const pick = (val, arr) => {
+    let best = null;
+    for (const c of arr) {
+      const d = Math.abs(val - c.v) + c.pri * th * 0.35;
+      if (Math.abs(val - c.v) < th && (!best || d < best.d)) best = { ...c, d };
+    }
+    return best;
+  };
+  const bx = pick(cx, xs), by = pick(cy, ys);
+  const guides = [];
+  if (bx) guides.push({ x: bx.line, safe: bx.line !== W / 2 });
+  if (by) guides.push({ y: by.line, safe: by.line !== H / 2 });
+  return { x: bx ? bx.v : cx, y: by ? by.v : cy, guides };
+}
+
+function SelectionBox({ rect, scale, label, onMoveStart, onScale, onRotate, onEnd, onDblClick, rot }) {
   if (!rect) return null;
   const w = rect.w * scale, h = rect.h * scale;
   const style = `left:${rect.x * scale - w / 2}px;top:${rect.y * scale - h / 2}px;width:${w}px;height:${h}px;transform:rotate(${rot || 0}rad)`;
-  const drag = (kind) => (e) => {
+  const handle = (kind) => (e) => {
     e.preventDefault(); e.stopPropagation();
     const sx = e.clientX, sy = e.clientY;
     const box = e.currentTarget.closest('.preview-wrap').getBoundingClientRect();
     const cx = box.left + rect.x * scale, cy = box.top + rect.y * scale;
     const move = (ev) => {
-      if (kind === 'move') onDrag((ev.clientX - sx) / scale, (ev.clientY - sy) / scale, ev);
       if (kind === 'scale') {
         const d0 = Math.hypot(sx - cx, sy - cy), d1 = Math.hypot(ev.clientX - cx, ev.clientY - cy);
         onScale && onScale(d1 / Math.max(1, d0));
       }
       if (kind === 'rot') onRotate && onRotate(Math.atan2(ev.clientY - cy, ev.clientX - cx) + Math.PI / 2);
     };
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); onDrag(null); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); onEnd && onEnd(); };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
-  return html`<div class="sel-box" style=${style} onPointerDown=${drag('move')}>
+  return html`<div class="sel-box" style=${style} onPointerDown=${onMoveStart} onDblClick=${onDblClick}>
     ${label && html`<span class="sel-name">${label}</span>`}
-    ${onScale && html`<span class="h br" onPointerDown=${drag('scale')}></span><span class="h tl" onPointerDown=${drag('scale')}></span>`}
-    ${onRotate && html`<span class="h rot" onPointerDown=${drag('rot')}></span>`}
+    ${onScale && html`<span class="h br" title="Tamaño" onPointerDown=${handle('scale')}></span><span class="h tl" title="Tamaño" onPointerDown=${handle('scale')}></span>`}
+    ${onRotate && html`<span class="h rot" title="Girar" onPointerDown=${handle('rot')}></span>`}
   </div>`;
+}
+
+// Editor de texto sobre el propio subtítulo (doble clic): Intro = nueva línea, Ctrl+Intro o clic fuera = guardar, Esc = cancelar.
+function CaptionTextEditor({ gid, rect, scale, boxW }) {
+  const g = captionGroups(state.project, projectVersion).find(x => x.id === gid);
+  const [val, setVal] = useState(g?.editText || '');
+  const ref = useRef();
+  const done = useRef(false);
+  useEffect(() => { const el = ref.current; if (el) { el.focus(); el.select(); } }, []);
+  if (!g) return null;
+  const close = (save) => {
+    if (done.current) return;
+    done.current = true;
+    if (save && val !== g.editText) A.editBlockText(gid, val);
+    setUI({ editCap: null });
+  };
+  const lines = Math.max(1, val.split('\n').length);
+  const w = Math.min(boxW - 16, Math.max(220, (rect ? rect.w * scale : 0) + 40));
+  const cx = rect ? rect.x * scale : boxW / 2;
+  const left = clamp(cx - w / 2, 8, boxW - w - 8);
+  const top = rect ? Math.max(8, rect.y * scale - (lines * 24 + 24) / 2) : 40;
+  return html`<div class="cap-editor" style=${`left:${left}px;top:${top}px;width:${w}px`} onPointerDown=${e => e.stopPropagation()}>
+    <textarea ref=${ref} rows=${lines} value=${val} spellcheck="false"
+      onInput=${e => setVal(e.target.value)}
+      onKeyDown=${e => {
+        if (e.key === 'Escape') { e.preventDefault(); close(false); }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); close(true); }
+      }}
+      onBlur=${() => close(true)}></textarea>
+    <div class="cap-editor-foot"><span>Intro: nueva línea · Esc: cancelar</span><button class="btn sm primary" onPointerDown=${e => { e.preventDefault(); close(true); }}>Hecho</button></div>
+  </div>`;
+}
+
+// Zoom dinámico (tipo DaVinci): marco inicial y final sobre el plano completo
+function ZoomFrames({ ov, cw, ch, scale }) {
+  const P = ov.props;
+  const drag = (key, kind) => (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const f0 = { ...(P[key] || (key === 'from' ? ZOOM_FROM : ZOOM_TO)) };
+    const sx = e.clientX, sy = e.clientY;
+    const wrap = e.currentTarget.closest('.preview-wrap').getBoundingClientRect();
+    const cxp = wrap.left + f0.x * cw * scale, cyp = wrap.top + f0.y * ch * scale;
+    const move = (ev) => {
+      const f = { ...f0 };
+      if (kind === 'move') { f.x = f0.x + (ev.clientX - sx) / (cw * scale); f.y = f0.y + (ev.clientY - sy) / (ch * scale); }
+      else { const d0 = Math.hypot(sx - cxp, sy - cyp), d1 = Math.hypot(ev.clientX - cxp, ev.clientY - cyp); f.s = clamp(f0.s * d0 / Math.max(1, d1), 1, 4); }
+      const hw = 0.5 / f.s;
+      f.x = clamp(f.x, hw, 1 - hw); f.y = clamp(f.y, hw, 1 - hw);
+      A.updateOverlay(ov.id, { props: { [key]: f } }, 'zf' + ov.id + key);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  return [['from', 'Inicio', P.from || ZOOM_FROM], ['to', 'Final', P.to || ZOOM_TO]].map(([key, label, f]) => {
+    const w = cw / f.s * scale, h = ch / f.s * scale;
+    return html`<div key=${key} class=${'zoom-frame ' + key} style=${`left:${f.x * cw * scale - w / 2}px;top:${f.y * ch * scale - h / 2}px;width:${w}px;height:${h}px`}>
+      <span class="zf-label" title="Arrastra para mover" onPointerDown=${drag(key, 'move')}>${label} · ${Math.round(f.s * 100)}%</span>
+      <span class="zf-move" title="Arrastra para mover" onPointerDown=${drag(key, 'move')}></span>
+      <span class="h br" title="Tamaño del encuadre" onPointerDown=${drag(key, 'scale')}></span>
+      <span class="h tl" title="Tamaño del encuadre" onPointerDown=${drag(key, 'scale')}></span>
+    </div>`;
+  });
+}
+
+// Doble clic sobre un texto libre o una motion con texto: se escribe directamente encima
+function OverlayTextEditor({ ov, rect, scale, boxW }) {
+  const ref = useRef();
+  const key = 'text' in ov.props ? 'text' : 'title' in ov.props ? 'title' : null;
+  useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
+  if (!key) return null;
+  const val = String(ov.props[key] ?? '');
+  const close = () => setUI({ editOv: null });
+  const w = Math.min(boxW - 16, Math.max(220, (rect ? rect.w * scale : 0) + 40));
+  const left = clamp((rect ? rect.x * scale : boxW / 2) - w / 2, 8, boxW - w - 8);
+  const top = rect ? Math.max(8, rect.y * scale - 30) : 40;
+  return html`<div class="cap-editor" style=${`left:${left}px;top:${top}px;width:${w}px`} onPointerDown=${e => e.stopPropagation()}>
+    <textarea ref=${ref} rows=${Math.max(1, val.split('\n').length)} value=${val} spellcheck="false"
+      onInput=${e => A.updateOverlay(ov.id, { props: { [key]: e.target.value } }, 'ovtext' + ov.id)}
+      onKeyDown=${e => { if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); close(); } }}
+      onBlur=${close}></textarea>
+    <div class="cap-editor-foot"><span>Intro: nueva línea · *palabra* = acento</span><button class="btn sm primary" onPointerDown=${e => { e.preventDefault(); close(); }}>Hecho</button></div>
+  </div>`;
+}
+
+// Barra flotante con las acciones del elemento seleccionado
+function SelTools({ rect, scale, boxW, boxH, children }) {
+  if (!rect) return null;
+  const top = rect.y * scale - rect.h * scale / 2;
+  const bottom = rect.y * scale + rect.h * scale / 2;
+  const above = top > 52;
+  const half = Math.min(boxW / 2, 160);
+  const style = `left:${clamp(rect.x * scale, half, boxW - half)}px;${above ? `top:${top - 44}px` : `top:${Math.min(boxH - 44, bottom + 12)}px`}`;
+  return html`<div class="sel-tools" style=${style} onPointerDown=${e => e.stopPropagation()}>${children}</div>`;
 }
 
 export function Preview() {
@@ -69,7 +190,8 @@ export function Preview() {
   const areaRef = useRef(), canvasRef = useRef();
   const [box, setBox] = useState({ w: 270, h: 480 });
   const [info, setInfo] = useState(null);
-  const dragStart = useRef(null);
+  const [guides, setGuides] = useState([]);
+  const scaleStart = useRef(null);
 
   useLayoutEffect(() => {
     const el = areaRef.current;
@@ -100,60 +222,169 @@ export function Preview() {
     return () => { player.onInfo = null; };
   }, [box.w, box.h, p.format.id, !!p.clips.length]);
 
-  const scale = box.w / (canvasRef.current?.width || p.format.w);
+  const cw = canvasRef.current?.width || p.format.w, ch = canvasRef.current?.height || p.format.h;
+  const scale = box.w / cw;
   const fscale = box.w / p.format.w; // escala desde px del formato
   const sel = ui.sel;
+  const groups = captionGroups(p, projectVersion);
 
-  // Selección
-  let selRect = null, selLabel = null, onDrag = null, onScale = null, onRotate = null, rot = 0;
-  if (info && sel?.type === 'overlay') {
-    const r = info.ovs.find(o => o.id === sel.id);
-    const ov = p.overlays.find(o => o.id === sel.id);
-    if (r && ov && !r.full) {
-      selRect = r; rot = r.rot; selLabel = MOTIONS[ov.type]?.name;
-      onDrag = (dx, dy, ev) => {
-        if (dx === null) { dragStart.current = null; return; }
-        if (!dragStart.current) dragStart.current = { x: ov.x, y: ov.y };
-        const cw = canvasRef.current.width, ch = canvasRef.current.height;
-        let nx = dragStart.current.x + dx / cw, ny = dragStart.current.y + dy / ch;
-        if (!ev.altKey) { if (Math.abs(nx - 0.5) < 0.015) nx = 0.5; }
-        A.updateOverlay(ov.id, { x: clamp(nx, -0.2, 1.2), y: clamp(ny, -0.2, 1.2) }, 'drag' + ov.id);
+  // ¿El arrastre de un subtítulo mueve solo ese bloque?
+  const capOwn = (gid) => {
+    const g = groups.find(x => x.id === gid);
+    return ui.capScope === 'group' || g?.ov?.posX !== undefined || g?.ov?.posY !== undefined;
+  };
+
+  // Arrastre directo (selecciona y mueve en el mismo gesto)
+  const beginMove = (e, target) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const c = canvasRef.current;
+    if (!c || !info) return;
+    const W = c.width, H = c.height, k = W / p.format.w;
+    const sr = safeRect(p.format, ui.safeZone);
+    const safe = { x: sr.x * k, y: sr.y * k, w: sr.w * k, h: sr.h * k };
+    let start, apply, align = 'center';
+    if (target.type === 'overlay') {
+      const ov = p.overlays.find(o => o.id === target.id), r = info.ovs.find(o => o.id === target.id);
+      if (!ov) return;
+      if (sel?.type !== 'overlay' || sel.id !== ov.id) setUI({ sel: { type: 'overlay', id: ov.id } });
+      if (MOTIONS[ov.type]?.full && !MOTIONS[ov.type]?.camera) return;
+      start = { x: ov.x, y: ov.y, w: r?.w || 0, h: r?.h || 0 };
+      apply = (x, y) => A.updateOverlay(ov.id, { x: clamp(x, -0.2, 1.2), y: clamp(y, -0.2, 1.2) }, 'drag' + ov.id);
+    } else {
+      const gid = target.id, rc = info.cap;
+      if (sel?.type !== 'group' || sel.id !== gid) setUI({ sel: { type: 'group', id: gid } });
+      if (!rc) return;
+      const g = groups.find(x => x.id === gid);
+      align = resolveStyle(p.captions, g?.ov).align || 'center';
+      start = { x: (rc.x + rc.w / 2) / W, y: (rc.y + rc.h / 2) / H, w: rc.w, h: rc.h };
+      const own = capOwn(gid);
+      apply = (x, y) => {
+        x = clamp(x, 0.02, 0.98); y = clamp(y, 0.02, 0.98);
+        if (own) A.setGroupStyle(gid, { posX: x, posY: y });
+        else update(pp => { pp.captions.posX = x; pp.captions.posY = y; pp.captions.posFree = true; }, { key: 'capY' });
       };
+    }
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false;
+    const move = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+      moved = true;
+      const cx = start.x * W + (ev.clientX - sx) / scale, cy = start.y * H + (ev.clientY - sy) / scale;
+      const s = state.ui.snap && !ev.altKey ? snapPos(cx, cy, start.w, start.h, W, H, safe, align) : { x: cx, y: cy, guides: [] };
+      setGuides(s.guides);
+      apply(s.x / W, s.y / H);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setGuides([]); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+
+  const hitTest = (e) => {
+    const r = e.currentTarget.closest('.preview-wrap').getBoundingClientRect();
+    const x = (e.clientX - r.left) / scale, y = (e.clientY - r.top) / scale;
+    const hit = [...info.ovs].reverse().find(o => !o.full && Math.abs(x - o.x) < o.w / 2 && Math.abs(y - o.y) < o.h / 2);
+    if (hit) return { type: 'overlay', id: hit.id };
+    const c = info.cap;
+    if (c && x > c.x - 8 && x < c.x + c.w + 8 && y > c.y - 8 && y < c.y + c.h + 8) return { type: 'group', id: c.id };
+    return null;
+  };
+  const onCanvasDown = (e) => {
+    if (!info) return;
+    const hit = hitTest(e);
+    if (hit) { beginMove(e, hit); return; }
+    if (sel?.type !== 'clip') setUI({ sel: null });
+  };
+  const onCanvasDbl = (e) => {
+    if (!info) return;
+    const hit = hitTest(e);
+    if (hit?.type === 'group') { player.pause(); setUI({ sel: hit, editCap: hit.id }); }
+    else if (hit?.type === 'overlay') {
+      const ov = p.overlays.find(o => o.id === hit.id);
+      player.pause();
+      if (ov && ('text' in ov.props || 'title' in ov.props)) setUI({ sel: hit, editOv: hit.id });
+      else setUI({ sel: hit });
+    }
+  };
+
+  // Selección actual
+  let selRect = null, selLabel = null, onScale = null, onRotate = null, rot = 0, tools = null, moveStart = null, dbl = null, zoomEdit = null;
+  const end = () => { scaleStart.current = null; };
+  const selOv = sel?.type === 'overlay' ? p.overlays.find(o => o.id === sel.id) : null;
+  if (selOv?.type === 'zoom' && (selOv.props.mode === 'dinamico' || selOv.props.follow)) {
+    // zoom dinámico: marcos inicial/final · zoom que sigue la cara: no hay punto que mover
+    const t = timeBus.t, inside = t >= selOv.start && t < selOv.start + selOv.dur;
+    if (selOv.props.mode === 'dinamico' && inside) zoomEdit = selOv;
+    tools = html`<${SelTools} rect=${{ x: cw / 2, y: ch * 0.06, w: 0, h: 0 }} scale=${scale} boxW=${box.w} boxH=${box.h}>
+      ${selOv.props.mode === 'dinamico'
+        ? html`<button class="st-btn" title="Intercambiar inicio y final" onClick=${() => A.updateOverlay(selOv.id, { props: { from: selOv.props.to || ZOOM_TO, to: selOv.props.from || ZOOM_FROM } })}><${Icon} name="repeat" /><span>Invertir</span></button>
+               ${!inside && html`<button class="st-btn" onClick=${() => player.seek(selOv.start + 0.02)}><${Icon} name="play" /><span>Ir al zoom</span></button>`}`
+        : html`<span class="st-note">Sigue la cara</span>`}
+      <button class="st-btn danger" title="Eliminar (Supr)" onClick=${A.deleteSelection}><${Icon} name="trash" /></button>
+    </${SelTools}>`;
+  } else if (info && sel?.type === 'overlay') {
+    const r = info.ovs.find(o => o.id === sel.id);
+    const ov = selOv;
+    const M = ov && MOTIONS[ov.type];
+    if (r && ov && !r.full) {
+      selRect = r; rot = r.rot; selLabel = M?.name;
+      moveStart = (e) => beginMove(e, { type: 'overlay', id: ov.id });
+      dbl = () => { player.pause(); if ('text' in ov.props || 'title' in ov.props) setUI({ editOv: ov.id }); };
       onScale = (k) => {
-        if (!dragStart.current) dragStart.current = { s: ov.scale || 1 };
-        A.updateOverlay(ov.id, { scale: clamp((dragStart.current.s ?? ov.scale) * k, 0.2, 5) }, 'scale' + ov.id);
+        if (!scaleStart.current) scaleStart.current = { s: ov.scale || 1 };
+        A.updateOverlay(ov.id, { scale: clamp(scaleStart.current.s * k, 0.2, 5) }, 'scale' + ov.id);
       };
       onRotate = (a) => {
         const snap = Math.abs(a) < 0.06 ? 0 : a;
         A.updateOverlay(ov.id, { rot: snap }, 'rot' + ov.id);
       };
     }
+    if (ov && !M?.camera && (r || M?.full)) {
+      tools = html`<${SelTools} rect=${r && !r.full ? r : { x: cw / 2, y: ch * 0.12, w: 0, h: 0 }} scale=${scale} boxW=${box.w} boxH=${box.h}>
+        <button class=${'st-btn' + (ov.behind ? ' on' : '')} title="Detrás de la persona (efecto sándwich)" onClick=${() => A.updateOverlay(ov.id, { behind: !ov.behind })}><${Icon} name="userBehind" /><span>Detrás</span></button>
+        <button class="st-btn" title="Duplicar" onClick=${() => A.duplicateOverlay(ov.id)}><${Icon} name="copy" /></button>
+        <button class="st-btn" title="Traer delante" onClick=${() => A.overlayZ(ov.id, 1)}><${Icon} name="bringFront" /></button>
+        <button class="st-btn" title="Enviar detrás" onClick=${() => A.overlayZ(ov.id, -1)}><${Icon} name="sendBack" /></button>
+        <button class=${'st-btn' + (ui.snap ? ' on' : '')} title="Imán (centro y márgenes seguros). Alt al arrastrar lo desactiva" onClick=${() => setUI({ snap: !ui.snap })}><${Icon} name="magnet" /></button>
+        <button class="st-btn danger" title="Eliminar (Supr)" onClick=${A.deleteSelection}><${Icon} name="trash" /></button>
+      </${SelTools}>`;
+    }
   } else if (info?.cap && (sel?.type === 'group' || ui.tab === 'captions')) {
+    const gid = info.cap.id;
+    const g = groups.find(x => x.id === gid);
+    const own = capOwn(gid);
     selRect = { x: info.cap.x + info.cap.w / 2, y: info.cap.y + info.cap.h / 2, w: info.cap.w, h: info.cap.h };
-    selLabel = 'Subtítulos';
-    const g = info.cap.id;
-    onDrag = (dx, dy, ev) => {
-      if (dx === null) { dragStart.current = null; return; }
-      const fw = A.findWord(g);
-      const hasOwn = fw?.w.gs?.posY !== undefined || fw?.w.gs?.posX !== undefined;
-      if (!dragStart.current) dragStart.current = { y: hasOwn ? (fw.w.gs.posY ?? p.captions.posY) : p.captions.posY, x: hasOwn ? (fw.w.gs.posX ?? p.captions.posX ?? 0.5) : (p.captions.posX ?? 0.5) };
-      const ny = clamp(dragStart.current.y + dy / canvasRef.current.height, 0.05, 0.95);
-      let nx = clamp(dragStart.current.x + dx / canvasRef.current.width, 0.05, 0.95);
-      if (!ev?.altKey && Math.abs(nx - 0.5) < 0.02) nx = 0.5; // imán al centro
-      if (hasOwn) A.setGroupStyle(g, { posY: ny, posX: nx });
-      else update(pp => { pp.captions.posY = ny; pp.captions.posX = nx; }, { key: 'capY' });
+    selLabel = own ? 'Este bloque' : 'Subtítulos';
+    moveStart = (e) => beginMove(e, { type: 'group', id: gid });
+    dbl = () => { player.pause(); setUI({ sel: { type: 'group', id: gid }, editCap: gid }); };
+    onScale = (k) => {
+      if (!scaleStart.current) scaleStart.current = { s: own ? (g?.ov?.size || 1) : (p.captions.size || 1) };
+      const v = clamp(scaleStart.current.s * k, 0.3, 3);
+      if (own) A.setGroupStyle(gid, { size: v });
+      else update(pp => { pp.captions.size = v; }, { key: 'capsize' });
     };
+    if (sel?.type === 'group' && ui.editCap !== gid) {
+      const st = resolveStyle(p.captions, g?.ov);
+      const sizeBy = (f) => {
+        if (own) A.setGroupStyle(gid, { size: clamp((g?.ov?.size || 1) * f, 0.3, 3) });
+        else update(pp => { pp.captions.size = clamp((pp.captions.size || 1) * f, 0.3, 3); }, { key: 'capsize' });
+      };
+      tools = html`<${SelTools} rect=${selRect} scale=${scale} boxW=${box.w} boxH=${box.h}>
+        <div class="st-seg" title="Qué se mueve y se edita">
+          <button class=${!own ? 'on' : ''} onClick=${() => { setUI({ capScope: 'all' }); if (g?.ov?.posX !== undefined || g?.ov?.posY !== undefined) A.setGroupStyle(gid, { posX: null, posY: null }); }}>Todos</button>
+          <button class=${own ? 'on' : ''} onClick=${() => setUI({ capScope: 'group' })}>Este</button>
+        </div>
+        <button class="st-btn" title="Editar el texto (doble clic)" onClick=${dbl}><${Icon} name="pencil" /></button>
+        <button class="st-btn" title="Más pequeño" onClick=${() => sizeBy(1 / 1.1)}><${Icon} name="minus" /></button>
+        <button class="st-btn" title="Más grande" onClick=${() => sizeBy(1.1)}><${Icon} name="plus" /></button>
+        <button class=${'st-btn' + (st.behind ? ' on' : '')} title="Detrás de la persona" onClick=${() => own ? A.setGroupStyle(gid, { behind: !st.behind }) : update(pp => { pp.captions.behind = !pp.captions.behind; })}><${Icon} name="userBehind" /></button>
+        <button class=${'st-btn' + (ui.snap ? ' on' : '')} title="Imán (centro y márgenes seguros según la alineación). Alt al arrastrar lo desactiva" onClick=${() => setUI({ snap: !ui.snap })}><${Icon} name="magnet" /></button>
+      </${SelTools}>`;
+    }
   }
 
-  const onCanvasDown = (e) => {
-    if (!info) return;
-    const r = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - r.left) / scale, y = (e.clientY - r.top) / scale;
-    const hit = [...info.ovs].reverse().find(o => !o.full && Math.abs(x - o.x) < o.w / 2 && Math.abs(y - o.y) < o.h / 2);
-    if (hit) { setUI({ sel: { type: 'overlay', id: hit.id } }); return; }
-    if (info.cap && x > info.cap.x && x < info.cap.x + info.cap.w && y > info.cap.y && y < info.cap.y + info.cap.h) { setUI({ sel: { type: 'group', id: info.cap.id } }); return; }
-    if (sel?.type !== 'clip') setUI({ sel: null });
-  };
+  const editOv = ui.editOv && sel?.type === 'overlay' && sel.id === ui.editOv ? p.overlays.find(o => o.id === ui.editOv) : null;
+  const editing = (ui.editCap && groups.some(x => x.id === ui.editCap)) || !!editOv;
+  const capRectFor = (gid) => (info?.cap?.id === gid ? { x: info.cap.x + info.cap.w / 2, y: info.cap.y + info.cap.h / 2, w: info.cap.w, h: info.cap.h } : null);
 
   const empty = !p.clips.length;
   return html`<section class="stage">
@@ -162,6 +393,7 @@ export function Preview() {
       <span class="row" style="gap:2px">
         <button class=${'tl-icon' + (ui.compare ? ' on' : '')} title="Comparar con el original (sin color)" onClick=${() => setUI({ compare: !ui.compare })}><${Icon} name="contrast" /></button>
         <button class="tl-icon" title="Capturar fotograma (PNG)" onClick=${() => captureFrame()}><${Icon} name="camera" /></button>
+        <button class=${'tl-icon' + (ui.snap ? ' on' : '')} title="Imán al mover (centro y márgenes seguros)" onClick=${() => setUI({ snap: !ui.snap })}><${Icon} name="magnet" /></button>
         <button class=${'tl-icon' + (ui.showSafe ? ' on' : '')} title="Mostrar zonas seguras" onClick=${() => setUI({ showSafe: !ui.showSafe })}><${Icon} name="shield" /></button>
         <select class="select mini" title="Zona segura de la red social" value=${ui.safeZone} onChange=${e => setUI({ safeZone: e.target.value })}>
           ${Object.entries(SAFE_ZONES).map(([k, z]) => html`<option value=${k} selected=${k === ui.safeZone}>${z.name}</option>`)}
@@ -172,10 +404,17 @@ export function Preview() {
       ${empty ? html`<${EmptyStage} />` : html`
       <div class="preview-wrap" style=${`width:${box.w}px;height:${box.h}px`}>
         ${ui.compare && html`<div class="compare-badge">Original</div>`}
-        <canvas ref=${canvasRef} onPointerDown=${onCanvasDown}></canvas>
+        <canvas ref=${canvasRef} onPointerDown=${onCanvasDown} onDblClick=${onCanvasDbl}></canvas>
         <div class="preview-ui">
           <${SafeOverlay} p=${p} ui=${ui} scale=${fscale} />
-          <${SelectionBox} rect=${selRect} scale=${scale} label=${selLabel} onDrag=${onDrag} onScale=${onScale} onRotate=${onRotate} rot=${rot} />
+          ${guides.map(gd => gd.x !== undefined
+            ? html`<div class=${'snap-guide v' + (gd.safe ? ' safe' : '')} style=${`left:${gd.x * scale}px`}></div>`
+            : html`<div class=${'snap-guide h' + (gd.safe ? ' safe' : '')} style=${`top:${gd.y * scale}px`}></div>`)}
+          ${zoomEdit && html`<${ZoomFrames} ov=${zoomEdit} cw=${cw} ch=${ch} scale=${scale} />`}
+          ${!editing && html`<${SelectionBox} rect=${selRect} scale=${scale} label=${tools ? null : selLabel} onMoveStart=${moveStart} onScale=${onScale} onRotate=${onRotate} onEnd=${end} onDblClick=${dbl} rot=${rot} />`}
+          ${!editing && tools}
+          ${editing && !editOv && html`<${CaptionTextEditor} key=${ui.editCap} gid=${ui.editCap} rect=${capRectFor(ui.editCap)} scale=${scale} boxW=${box.w} />`}
+          ${editOv && html`<${OverlayTextEditor} key=${editOv.id} ov=${editOv} rect=${info?.ovs.find(o => o.id === editOv.id)} scale=${scale} boxW=${box.w} />`}
         </div>
       </div>`}
     </div>

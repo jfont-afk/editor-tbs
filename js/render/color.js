@@ -7,11 +7,16 @@ const FS = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 o;
 uniform sampler2D u_tex; uniform vec2 u_texel; uniform float u_time;
-uniform float u_exposure, u_contrast, u_saturation, u_vibrance, u_temp, u_tint, u_high, u_shad, u_fade, u_vignette, u_grain, u_sharpen;
+uniform float u_exposure, u_contrast, u_saturation, u_vibrance, u_temp, u_tint, u_high, u_shad, u_fade, u_vignette, u_grain, u_sharpen, u_chroma;
 uniform vec3 u_stS, u_stH;
 float luma(vec3 c){ return dot(c, vec3(0.2126,0.7152,0.0722)); }
 void main(){
   vec3 c = texture(u_tex, v_uv).rgb;
+  if (u_chroma > 0.001) {
+    // aberración cromática radial (rojo hacia fuera, azul hacia dentro)
+    vec2 dd = (v_uv - 0.5) * u_chroma * 0.014;
+    c = vec3(texture(u_tex, v_uv + dd).r, c.g, texture(u_tex, v_uv - dd).b);
+  }
   if (u_sharpen > 0.001) {
     vec3 b = (texture(u_tex, v_uv+vec2(u_texel.x,0.0)).rgb + texture(u_tex, v_uv-vec2(u_texel.x,0.0)).rgb +
               texture(u_tex, v_uv+vec2(0.0,u_texel.y)).rgb + texture(u_tex, v_uv-vec2(0.0,u_texel.y)).rgb) * 0.25;
@@ -66,9 +71,11 @@ export const COLOR_SLIDERS = [
   { k: 'temperature', name: 'Temperatura', min: -1, max: 1, step: 0.01 },
   { k: 'tint', name: 'Matiz', min: -1, max: 1, step: 0.01 },
   { k: 'fade', name: 'Desvanecido', min: 0, max: 0.6, step: 0.01 },
-  { k: 'vignette', name: 'Viñeta', min: 0, max: 1, step: 0.01 },
-  { k: 'grain', name: 'Grano', min: 0, max: 1, step: 0.01 },
-  { k: 'sharpen', name: 'Nitidez', min: 0, max: 1, step: 0.01 },
+  // efectos de imagen (se editan en la pestaña Efectos)
+  { k: 'sharpen', name: 'Nitidez', min: 0, max: 1, step: 0.01, fx: true },
+  { k: 'grain', name: 'Ruido / grano', min: 0, max: 1, step: 0.01, fx: true },
+  { k: 'chroma', name: 'Aberración cromática', min: 0, max: 1, step: 0.01, fx: true },
+  { k: 'vignette', name: 'Viñeta', min: 0, max: 1, step: 0.01, fx: true },
 ];
 
 // Valores finales = preset + ajustes del usuario
@@ -113,7 +120,7 @@ export class ColorGL {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this.u = {};
-    for (const n of ['u_tex', 'u_texel', 'u_time', 'u_exposure', 'u_contrast', 'u_saturation', 'u_vibrance', 'u_temp', 'u_tint', 'u_high', 'u_shad', 'u_fade', 'u_vignette', 'u_grain', 'u_sharpen', 'u_stS', 'u_stH']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['u_tex', 'u_texel', 'u_time', 'u_exposure', 'u_contrast', 'u_saturation', 'u_vibrance', 'u_temp', 'u_tint', 'u_high', 'u_shad', 'u_fade', 'u_vignette', 'u_grain', 'u_sharpen', 'u_chroma', 'u_stS', 'u_stH']) this.u[n] = gl.getUniformLocation(prog, n);
   }
 
   // Devuelve un canvas con el fotograma corregido (o null si no hay WebGL2)
@@ -136,7 +143,7 @@ export class ColorGL {
     gl.uniform1f(U.u_temp, v.temperature); gl.uniform1f(U.u_tint, v.tint);
     gl.uniform1f(U.u_high, v.highlights); gl.uniform1f(U.u_shad, v.shadows);
     gl.uniform1f(U.u_fade, v.fade); gl.uniform1f(U.u_vignette, v.vignette);
-    gl.uniform1f(U.u_grain, v.grain); gl.uniform1f(U.u_sharpen, v.sharpen);
+    gl.uniform1f(U.u_grain, v.grain); gl.uniform1f(U.u_sharpen, v.sharpen); gl.uniform1f(U.u_chroma, v.chroma || 0);
     gl.uniform3fv(U.u_stS, v.splitS); gl.uniform3fv(U.u_stH, v.splitH);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     return this.canvas;

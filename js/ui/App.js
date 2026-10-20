@@ -10,6 +10,8 @@ import { EditPanel } from './panels/EditPanel.js';
 import { CaptionsPanel } from './panels/CaptionsPanel.js';
 import { MotionsPanel } from './panels/MotionsPanel.js';
 import { ColorPanel } from './panels/ColorPanel.js';
+import { EffectsPanel } from './panels/EffectsPanel.js';
+import { logoSVG } from '../data/brandLogo.js';
 import { ThumbPanel } from './panels/ThumbPanel.js';
 import { ExportPanel } from './panels/ExportPanel.js';
 import { FORMATS } from '../data/brand.js';
@@ -19,8 +21,9 @@ import { folderState } from '../core/projectFolder.js';
 export const TABS = [
   { id: 'media', name: 'Medios', icon: 'folder', Panel: MediaPanel },
   { id: 'edit', name: 'Editar', icon: 'scissors', Panel: EditPanel },
-  { id: 'captions', name: 'Subtítulos', icon: 'captions', Panel: CaptionsPanel },
+  { id: 'captions', name: 'Texto', icon: 'type', Panel: CaptionsPanel },
   { id: 'motions', name: 'Motions', icon: 'sparkles', Panel: MotionsPanel },
+  { id: 'effects', name: 'Efectos', icon: 'zoomIn', Panel: EffectsPanel },
   { id: 'color', name: 'Color', icon: 'palette', Panel: ColorPanel },
   { id: 'thumb', name: 'Miniatura', icon: 'image', Panel: ThumbPanel },
   { id: 'export', name: 'Exportar', icon: 'export', Panel: ExportPanel },
@@ -52,8 +55,8 @@ function TopBar({ s }) {
   const p = s.project;
   return html`<header class="topbar">
     <div class="brand">
-      ${p.brand?.logo ? html`<img class="brand-logo" src=${p.brand.logo} alt="TBS" />` : html`<span class="brand-word">TBS <b>Editor</b></span>`}
-      <span class="brand-sub">para redes</span>
+      <span class="brand-mark" title="Traders Business School" dangerouslySetInnerHTML=${{ __html: logoSVG('#ffffff', 'full', '#f22b11') }}></span>
+      <span class="brand-sub">Editor</span>
     </div>
     <span class="top-sep"></span>
     <${ProjectMenu} />
@@ -127,13 +130,13 @@ function RestoreModal({ r }) {
 export function App() {
   const s = useStore();
   const tab = TABS.find(t => t.id === s.ui.tab) || TABS[0];
-  const showInsp = s.ui.tab !== 'thumb' && (!!s.ui.sel || ['edit', 'captions', 'motions', 'color'].includes(s.ui.tab));
+  const showInsp = s.ui.tab !== 'thumb' && (!!s.ui.sel || ['edit', 'captions', 'motions', 'effects', 'color'].includes(s.ui.tab));
   const fmt = s.ui.tab === 'thumb' ? (s.project.thumb?.format || '9x16') : s.project.format.id;
-  return html`<div class=${'app fmt-' + fmt + (showInsp ? '' : ' no-insp')}>
+  return html`<div class=${'app fmt-' + fmt + (showInsp ? '' : ' no-insp') + (s.ui.sel ? ' has-sel' : '')}>
     <${TopBar} s=${s} />
     <${Rail} s=${s} />
     <aside class="panel"><${tab.Panel} /></aside>
-    <aside class="insp"><${Inspector} /></aside>
+    <aside class="insp"><button class="btn sm ghost insp-close" onClick=${() => setUI({ sel: null })}><${Icon} name="chevronRight" style="transform:rotate(180deg)" />Volver a ${tab.name}</button><${Inspector} /></aside>
     ${s.ui.tab === 'thumb' ? html`<${ThumbPanel.Stage} />` : html`<${Preview} />`}
     <${Timeline} />
     <${BusyModal} b=${s.ui.busy} />

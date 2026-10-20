@@ -21,6 +21,8 @@ export const PALETTE = [
   { id: 'sky', name: 'Cielo', hex: C.sky, ink: C.white },
   { id: 'yellow', name: 'Amarillo', hex: C.yellow, ink: C.yellowInk },
   { id: 'crema', name: 'Crema', hex: C.crema, ink: C.n900 },
+  { id: 'olive', name: 'Oliva TBS', hex: C.fluorInk, ink: C.fluor },
+  { id: 'wine', name: 'Burdeos', hex: C.magentaInk, ink: C.white },
   { id: 'dark', name: 'Oscuro', hex: C.n900, ink: C.white },
   { id: 'black', name: 'Negro (sombras)', hex: '#000000', ink: C.white },
 ];

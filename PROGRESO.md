@@ -50,6 +50,20 @@ Se abre con **Abrir Editor.bat** → servidor local en `http://localhost:5179` �
 - [x] Exportación rápida: decodificación secuencial con WebCodecs (mediabunny 1.61.6, `CanvasSink.canvasesAtTimestamps` por clip, reduce a 1920 px si la fuente es mayor) con respaldo al método anterior. Vídeo de 85 s: de ~6 min a 12,9 s (6,6× tiempo real). Vídeo 4K HEVC de 8 s: 1,6 s. Duración idéntica al proyecto, H.264 1080×1920 + AAC.
 - [x] Análisis de cara a ×6 verificado: 3,5 s para el vídeo 4K de 8 s.
 
+## Ronda 6 — fallos y mejoras pedidas (hecho y verificado)
+- [x] A. Subtítulos: se arrastran directamente (seleccionar y mover en el mismo gesto) con **imán** al centro y a los márgenes seguros según la alineación (guías rojas; Alt = sin imán). Barra flotante: mover "Todos / Este bloque", editar texto, tamaño −/+, detrás de la persona, imán. Posición libre (fuera de la zona segura si se coloca a mano; ya no salta por la cara). Esquina = tamaño del bloque.
+- [x] A. **Doble clic** en el reproductor = escribir encima del subtítulo: cambiar/borrar palabras, añadir espacios y **Intro = segunda línea** (las palabras nuevas se reparten el tiempo; las borradas solo desaparecen del subtítulo). Bloques: arrastrar una palabra al bloque de al lado, "Bloque nuevo en el cursor", dividir/unir.
+- [x] A. Quitar la sombra funciona de verdad (la legibilidad automática solo refuerza una sombra activada). Las plantillas propias guardan también la posición.
+- [x] B. Motions y textos: arrastre directo con imán, barra flotante con **Detrás de la persona (sándwich)** en cualquier elemento, duplicar, capas y borrar. Doble clic en un texto libre = escribir encima (*palabra* = color de acento).
+- [x] C. Pestaña **Texto** (Subtítulos · Cajas de texto · Imágenes) y pestaña **Efectos**: nitidez, ruido, aberración cromática, viñeta (todo el vídeo o un clip) y zooms (rápido, lento, hacia dentro, hacia fuera, golpe, respiración) con velocidad, **curvas de aceleración** y **seguir la cara**; **zoom dinámico tipo DaVinci** con marco Inicio (blanco) y Final (rojo) editables en el reproductor.
+- [x] D. Miniaturas por **capas** (texto, etiqueta, iconos, logo): arrastrar con imán, doble clic para escribir, tipografía, peso, MAYÚS, cursiva, alineación, interletrado, sombra, fondo por línea, detrás de la persona. 7 plantillas (Webinar TBS del Design Kit, Texto detrás, Gancho, Editorial, Cajas, Dividida, Dato) con paletas TBS. Sin logo ni "Clases gratuitas"; @traderbusinessschool. **Zona segura de Instagram** (perfil 3:4 y feed 4:5) visible y respetada por las plantillas.
+- [x] E. Exportación para redes: hasta 24 Mbps, decodificación a 1,5× la resolución final y escalado de máxima calidad (nitidez en zooms), AAC 48 kHz, **audio a −14 LUFS con limitador** (verificado: −22,8 → −14,6 LUFS, pico −1,4 dB).
+- [x] F. Responsive: en pantallas grandes el panel no pasa de 720 px y el reproductor crece; portátiles 125 %, MacBook 13/14/16" y **móvil** (reproductor arriba, menú inferior, propiedades al seleccionar).
+- [x] G. Glosario de inglés (stop loss, price action, trading, broker, setup, TradingView, S&P 500…) que corrige solo al transcribir + términos propios.
+- [x] H. **Iconos oficiales del Brandkit** (86, de Figma) en motions y miniaturas; "Icono TBS" como en las portadas de webinar; **logotipo oficial** vectorial (motion Logo y barra superior).
+- [x] I. Comparación con CapCut: añadidos **velocidad del clip** (con el tono de voz conservado al exportar) y **espejo**. Revisión de fallos (orden de las reglas responsive, solapes de la línea de tiempo, plantillas propias leídas en cada fotograma…).
+- [x] J. Subido a GitHub.
+
 ## Ronda 5 — interfaz neutra y limpia (petición del usuario)
 - [x] Paleta de la interfaz: grises + **blanco** para lo activo/seleccionado + **rojo TBS** (#f22b11 / #dc270f) para Exportar, cursor de reproducción, indicadores y avisos. Sin azul ni magenta en la interfaz.
 - [x] Los **subtítulos conservan el verde lima (Fluor #daff0a)**: en el vídeo y en la interfaz (bloques de la línea de tiempo y palabras destacadas). Regla fija del usuario: no se toca.
