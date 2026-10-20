@@ -52,20 +52,36 @@ button { cursor: pointer; }
 
 /* ---------- Estructura: menú · herramientas · propiedades · reproductor grande a la derecha ---------- */
 /* La app está fijada a la ventana: nunca se desplaza ni se corta (escalado de Windows, ventanas pequeñas, arrastrar archivos…) */
-.app { --player-w: clamp(300px, calc((100vh - 128px) * 0.5625 + 40px), 44vw); --props-w: clamp(250px, 19vw, 340px);
+/* Por defecto el reproductor ocupa solo lo que necesita el vídeo (vertical casi siempre) y el resto
+   del ancho es para las herramientas y la línea de tiempo. Todos los tamaños se pueden cambiar
+   arrastrando los divisores (se guardan en el navegador): --player-w, --props-w y --tl-h. */
+.app { --rail-w: 78px; --ar: 0.5625; --props-w: clamp(260px, 18vw, 360px);
+  --player-w: clamp(300px, calc((100vh - 140px) * var(--ar) + 24px), 60vw);
   position: fixed; inset: 0; overflow: hidden; display: grid; gap: 6px; background: var(--bg); padding: 0 6px 6px 0;
-  /* Pantallas grandes (16:9 completa, 1440p, MacBook): el panel no pasa de 720 px y el espacio sobrante
-     va al reproductor (que siempre ocupa toda la altura). */
-  --panel-max: min(34vw, 720px);
-  grid-template-columns: 78px minmax(240px, var(--panel-max)) var(--props-w) minmax(var(--player-w), 1fr);
+  grid-template-columns: var(--rail-w) minmax(260px, 1fr) var(--props-w) var(--player-w);
   grid-template-rows: var(--top-h) minmax(0, 1fr) var(--tl-h);
   grid-template-areas: "top top top player" "rail panel insp player" "rail tl tl player"; }
-.app.fmt-4x5 { --player-w: clamp(400px, calc((100vh - 128px) * 0.8 + 40px), 48vw); }
-.app.fmt-1x1 { --player-w: clamp(420px, calc((100vh - 128px) + 40px), 50vw); }
-.app.fmt-16x9 { --player-w: clamp(480px, 50vw, 60vw); }
-.app.no-insp { grid-template-columns: 78px minmax(240px, calc(var(--panel-max) + var(--props-w))) 0 minmax(var(--player-w), 1fr); }
+.app.fmt-4x5 { --ar: 0.8; }
+.app.fmt-1x1 { --ar: 1; }
+.app.fmt-16x9 { --ar: 1.7778; }
+.app.no-insp { grid-template-columns: var(--rail-w) minmax(260px, 1fr) 0 var(--player-w); }
 .app.no-insp .insp { display: none; }
+/* Opción: línea de tiempo a todo el ancho (debajo también del reproductor) */
+.app.wide-tl { --player-w: clamp(260px, calc((100vh - var(--top-h) - var(--tl-h) - 130px) * var(--ar) + 24px), 60vw);
+  grid-template-areas: "top top top top" "rail panel insp player" "rail tl tl tl"; }
 .app > * { min-width: 0; min-height: 0; }
+/* Divisores arrastrables entre zonas */
+.splitter { position: absolute; z-index: 30; touch-action: none; }
+.splitter.v { width: 10px; margin-left: -5px; cursor: col-resize; }
+.splitter.h { height: 10px; margin-top: -5px; cursor: row-resize; }
+.splitter::after { content: ""; position: absolute; border-radius: 3px; background: transparent; transition: background .12s; }
+.splitter.v::after { left: 4px; width: 2px; top: 0; bottom: 0; }
+.splitter.h::after { top: 4px; height: 2px; left: 0; right: 0; }
+.splitter:hover::after, .splitter.drag::after { background: var(--red); }
+.splitter-tip { position: absolute; z-index: 31; pointer-events: none; padding: 3px 8px; border-radius: 6px; background: var(--white); color: var(--ink); font: 700 11px var(--font-mono); white-space: nowrap; transform: translate(-50%, -130%); }
+body.resizing, body.resizing * { cursor: inherit !important; user-select: none !important; }
+body.resizing.col { cursor: col-resize !important; }
+body.resizing.row { cursor: row-resize !important; }
 
 /* ---------- Barra superior ---------- */
 .topbar { grid-area: top; display: flex; align-items: center; gap: 10px; padding: 0 4px 0 18px; z-index: 5; }
@@ -92,6 +108,7 @@ button { cursor: pointer; }
 .pm-dot.saving { background: var(--warn); }
 .pm-dot.error { background: var(--red); }
 .pm-pop { position: absolute; top: 40px; left: 0; z-index: 40; width: 320px; padding: 6px; border-radius: var(--r-lg); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-strong), 0 20px 50px rgba(0, 0, 0, 0.6); display: flex; flex-direction: column; gap: 2px; }
+.pm-pop.right { left: auto; right: 0; }
 .pm-pop > button, .pm-versions button { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); font-weight: 600; text-align: left; }
 .pm-pop > button:hover, .pm-versions button:hover { background: var(--surface-3); }
 .pm-pop svg { width: 15px; height: 15px; color: var(--text-2); }
@@ -146,7 +163,7 @@ button { cursor: pointer; }
 .panel-title em { font-family: var(--font-serif); font-weight: 500; color: var(--text); }
 .panel-desc { color: var(--text-3); margin: 4px 0 0; line-height: 1.45; font-size: 12.5px; }
 .panel-body { flex: 1; overflow-y: auto; padding: 6px 14px 24px; min-height: 0; }
-.panel-body > *, .panel-head > * { max-width: 720px; }
+.panel-body > *, .panel-head > * { max-width: 960px; }
 .section { padding: 10px 4px 14px; }
 .section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--font-ui); font-size: 12px; font-weight: 700; color: var(--text-2); margin: 0 0 10px; }
 .section-title .hint { font-weight: 500; color: var(--text-3); }
@@ -483,8 +500,7 @@ button { cursor: pointer; }
    ====================================================================== */
 /* Ventanas estrechas (portátiles, escalado 125–150 %) */
 @media (max-width: 1280px) {
-  .app { --props-w: clamp(230px, 22vw, 280px); --player-w: clamp(260px, calc((100vh - 128px) * 0.5625 + 24px), 34vw); grid-template-columns: 64px minmax(220px, 1fr) var(--props-w) var(--player-w); }
-  .app.no-insp { grid-template-columns: 64px minmax(220px, 1fr) 0 var(--player-w); }
+  .app { --rail-w: 64px; --props-w: clamp(230px, 22vw, 280px); }
   .rail-btn { width: 56px; font-size: 10.5px; }
   .topbar { padding-left: 12px; gap: 6px; }
   .proj-name { min-width: 80px; max-width: 160px; }

@@ -99,6 +99,7 @@ export const ICONS = {
   reset: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
   imagePlus: '<path d="M16 5h6"/><path d="M19 2v6"/><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/><circle cx="9" cy="9" r="2"/>',
   textBox: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8"/><path d="M12 9v7"/>',
+  layout: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h12"/><path d="M15 3v18"/><path d="M9 3v12"/>',
   effects: '<path d="M12 3l1.9 5.8L20 10l-5 3.9L16.6 20 12 16.7 7.4 20 9 13.9 4 10l6.1-1.2z"/>',
 };
 

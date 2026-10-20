@@ -12,6 +12,7 @@ import { MotionsPanel } from './panels/MotionsPanel.js';
 import { ColorPanel } from './panels/ColorPanel.js';
 import { EffectsPanel } from './panels/EffectsPanel.js';
 import { logoSVG } from '../data/brandLogo.js';
+import { Splitters, layout, layoutStyle, resetLayout, setWideTimeline } from './Splitters.js';
 import { ThumbPanel } from './panels/ThumbPanel.js';
 import { ExportPanel } from './panels/ExportPanel.js';
 import { FORMATS } from '../data/brand.js';
@@ -51,6 +52,19 @@ function ProjectMenu() {
   </div>`;
 }
 
+// Diseño de la interfaz: línea de tiempo a todo el ancho y volver a los tamaños por defecto
+function LayoutMenu() {
+  const [open, setOpen] = useState(false);
+  return html`<div class="pmenu">
+    <${Btn} cls=${'icon ghost' + (open ? ' on' : '')} icon="layout" title="Diseño de la interfaz" onClick=${() => setOpen(!open)} />
+    ${open && html`<div class="pm-pop right" onMouseLeave=${() => setOpen(false)}>
+      <div class="pm-status">Arrastra los <b>divisores</b> entre zonas para cambiar el tamaño del reproductor, de las propiedades y de la línea de tiempo. Doble clic en un divisor = tamaño por defecto.</div>
+      <label class="pm-check"><input type="checkbox" checked=${layout.wideTl} onChange=${e => setWideTimeline(e.target.checked)} /> Línea de tiempo a todo el ancho (también debajo del reproductor)</label>
+      <button onClick=${() => { resetLayout(); document.querySelector('.app')?.style.removeProperty('--player-w'); setOpen(false); }}><${Icon} name="reset" />Restablecer los tamaños</button>
+    </div>`}
+  </div>`;
+}
+
 function TopBar({ s }) {
   const p = s.project;
   return html`<header class="topbar">
@@ -62,6 +76,7 @@ function TopBar({ s }) {
     <${ProjectMenu} />
     <input class="proj-name" value=${p.name} onChange=${e => update(pp => { pp.name = e.target.value || 'Proyecto sin título'; })} title="Nombre del proyecto" />
     <div class="top-spacer"></div>
+    <${LayoutMenu} />
     <${Btn} cls="icon ghost" icon="undo" title="Deshacer (Ctrl+Z)" disabled=${!canUndo()} onClick=${undo} />
     <${Btn} cls="icon ghost" icon="redo" title="Rehacer (Ctrl+Y)" disabled=${!canRedo()} onClick=${redo} />
     <${Btn} cls="cta" icon="download" disabled=${!p.clips.length} onClick=${() => setUI({ tab: 'export' })}>Exportar</${Btn}>
@@ -132,7 +147,7 @@ export function App() {
   const tab = TABS.find(t => t.id === s.ui.tab) || TABS[0];
   const showInsp = s.ui.tab !== 'thumb' && (!!s.ui.sel || ['edit', 'captions', 'motions', 'effects', 'color'].includes(s.ui.tab));
   const fmt = s.ui.tab === 'thumb' ? (s.project.thumb?.format || '9x16') : s.project.format.id;
-  return html`<div class=${'app fmt-' + fmt + (showInsp ? '' : ' no-insp') + (s.ui.sel ? ' has-sel' : '')}>
+  return html`<div class=${'app fmt-' + fmt + (showInsp ? '' : ' no-insp') + (s.ui.sel ? ' has-sel' : '') + (layout.wideTl ? ' wide-tl' : '')} style=${layoutStyle(fmt)}>
     <${TopBar} s=${s} />
     <${Rail} s=${s} />
     <aside class="panel"><${tab.Panel} /></aside>
@@ -142,5 +157,6 @@ export function App() {
     <${BusyModal} b=${s.ui.busy} />
     ${!s.ui.busy && html`<${RestoreModal} r=${s.ui.restore} />`}
     <div class="toasts">${s.ui.toasts.map(t => html`<div class=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}>${t.text}</div>`)}</div>
+    <${Splitters} fmt=${fmt} showInsp=${showInsp} />
   </div>`;
 }

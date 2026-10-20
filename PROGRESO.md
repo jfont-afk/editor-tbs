@@ -69,6 +69,11 @@ Se abre con **Abrir Editor.bat** → servidor local en `http://localhost:5179` �
 - [x] Arreglado: en la miniatura "Texto detrás" la frase de acento y el @usuario no se leían sobre la ropa oscura (ahora blancos con sombra) y el titular se coloca solo detrás de la cabeza según la captura.
 - [x] Arreglado: la exportación ya no se frena si la pestaña pasa a segundo plano (espera al codificador con su propio evento en lugar de temporizadores).
 
+## Interfaz ajustable (petición del usuario)
+- [x] Divisores arrastrables como en CapCut/Premiere: ancho del reproductor, ancho de las propiedades y alto de la línea de tiempo (el panel de herramientas ocupa el resto). Se guardan en el navegador; doble clic en un divisor = tamaño por defecto. Indicador con los píxeles mientras se arrastra.
+- [x] Por defecto el reproductor ocupa solo lo que necesita el vídeo (vertical a toda altura) y todo el ancho sobrante va a herramientas y línea de tiempo.
+- [x] Menú "Diseño" (barra superior): línea de tiempo a todo el ancho (también bajo el reproductor) y restablecer tamaños. El ancho del reproductor se recuerda por formato y por modo.
+
 ## Ronda 5 — interfaz neutra y limpia (petición del usuario)
 - [x] Paleta de la interfaz: grises + **blanco** para lo activo/seleccionado + **rojo TBS** (#f22b11 / #dc270f) para Exportar, cursor de reproducción, indicadores y avisos. Sin azul ni magenta en la interfaz.
 - [x] Los **subtítulos conservan el verde lima (Fluor #daff0a)**: en el vídeo y en la interfaz (bloques de la línea de tiempo y palabras destacadas). Regla fija del usuario: no se toca.
