@@ -64,6 +64,11 @@ Se abre con **Abrir Editor.bat** → servidor local en `http://localhost:5179` �
 - [x] I. Comparación con CapCut: añadidos **velocidad del clip** (con el tono de voz conservado al exportar) y **espejo**. Revisión de fallos (orden de las reglas responsive, solapes de la línea de tiempo, plantillas propias leídas en cada fotograma…).
 - [x] J. Subido a GitHub.
 
+## Revisión en Chrome (versión publicada y local)
+- [x] Probado en el Chrome del usuario (1920×903 y portátil 1536×695 a 250 %): carga sin errores, arrastre de subtítulos y motions con imán, doble clic + Intro + "Hecho", efecto sándwich y deshacer, zoom que sigue la cara, miniaturas, reproducción con Espacio y exportación de 90 s en ~12–17 s (audio a −14 LUFS).
+- [x] Arreglado: en la miniatura "Texto detrás" la frase de acento y el @usuario no se leían sobre la ropa oscura (ahora blancos con sombra) y el titular se coloca solo detrás de la cabeza según la captura.
+- [x] Arreglado: la exportación ya no se frena si la pestaña pasa a segundo plano (espera al codificador con su propio evento en lugar de temporizadores).
+
 ## Ronda 5 — interfaz neutra y limpia (petición del usuario)
 - [x] Paleta de la interfaz: grises + **blanco** para lo activo/seleccionado + **rojo TBS** (#f22b11 / #dc270f) para Exportar, cursor de reproducción, indicadores y avisos. Sin azul ni magenta en la interfaz.
 - [x] Los **subtítulos conservan el verde lima (Fluor #daff0a)**: en el vídeo y en la interfaz (bloques de la línea de tiempo y palabras destacadas). Regla fija del usuario: no se toca.

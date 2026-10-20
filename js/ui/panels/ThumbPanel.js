@@ -76,8 +76,9 @@ export const THUMB_TEMPLATES = [
       const v = H > W;
       return [
         T({ role: 'title', text: 'INVERTIR', size: v ? 290 : 250, align: 'center', x: X(0.5), y: Y(v ? 0.04 : 0), maxW: S.w, behind: true, lh: 0.86 }),
-        T({ role: 'accent', text: 'sin miedo', font: 'serif', weight: 600, italic: true, size: v ? 116 : 92, align: 'center', x: X(0.5), y: Y(v ? 0.8 : 0.74), ls: -0.02, shadow: true }),
-        T({ role: 'body', text: HANDLE, weight: 500, size: v ? 40 : 34, align: 'center', x: X(0.5), y: Y(0.955), ls: -0.01 }),
+        // estos dos van encima de la persona: blancos con sombra para que se lean siempre
+        T({ role: 'onPhoto', text: 'sin miedo', font: 'serif', weight: 600, italic: true, size: v ? 116 : 92, align: 'center', x: X(0.5), y: Y(v ? 0.8 : 0.74), ls: -0.02, shadow: true }),
+        T({ role: 'onPhoto', text: HANDLE, weight: 500, size: v ? 40 : 34, align: 'center', x: X(0.5), y: Y(0.955), ls: -0.01, shadow: true }),
       ];
     },
   },
@@ -149,6 +150,15 @@ export function makeThumb(tplId = 'webinar', format = '9x16', palId = null) {
   const S = safeOf(format);
   const X = (f) => S.x + f * S.w, Y = (f) => S.y + f * S.h;
   const th = { v: 2, tpl: tpl.id, format, pal: palId || tpl.pal, bg: { ...tpl.bg, color: C.n900 }, layers: tpl.layers(W, H, X, Y, S) };
+  // "Texto detrás": el titular se coloca para que la cabeza lo tape en parte
+  if (tpl.id === 'detras') {
+    const top = personTop(th, W, H);
+    const title = th.layers.find(l => l.behind);
+    if (top !== null && title) {
+      const fs = (title.size || 200) * Math.min(W, H) / 1080;
+      title.y = clamp((top + fs * 0.45) / H - (fs * 0.86) / H, S.y, S.y + S.h * 0.6);
+    }
+  }
   return applyPalette(th, th.pal);
 }
 export const defaultThumb = () => makeThumb('webinar', '9x16');
@@ -161,6 +171,7 @@ function applyPalette(th, palId) {
   th.layers = th.layers.map(l => {
     const n = { ...l };
     if (l.role === 'box') { n.color = P.boxInk || C.n900; n.boxColor = P.box || C.fluor; n.accent = P.title; }
+    else if (l.role === 'onPhoto') { n.color = C.white; n.accent = P.bg && P.bg !== C.n900 ? P.bg : C.fluor; }
     else { n.color = P[l.role] || P.body; n.accent = P.accent; }
     if (l.kind === 'icons') n.ring = tpl.palette === 'photo' ? C.n900 : P.title;
     return n;
@@ -270,6 +281,24 @@ function photoRect(th, W, H) {
   return { x: x + (b.offX || 0) * W, y: y + (b.offY || 0) * H, w, h, area };
 }
 
+// Altura (px del lienzo) donde empieza la persona según la máscara, o null
+function personTop(th, W, H) {
+  if (!rt.photo || !rt.mask) return null;
+  const r = photoRect(th, W, H);
+  if (!r) return null;
+  const m = rt.mask, mw = 64, mh = Math.max(1, Math.round(64 * m.height / m.width));
+  const c = document.createElement('canvas'); c.width = mw; c.height = mh;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(m, 0, 0, mw, mh);
+  const d = x.getImageData(0, 0, mw, mh).data;
+  for (let yy = 0; yy < mh; yy++) {
+    let n = 0;
+    for (let xx = 0; xx < mw; xx++) if (d[(yy * mw + xx) * 4 + 3] > 128) n++;
+    if (n > mw * 0.04) return r.y + (yy / mh) * r.h;
+  }
+  return null;
+}
+
 function cutout(W, H, r, outline) {
   if (!rt.photo || !rt.mask) return null;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -338,7 +367,14 @@ async function captureForThumb() {
     try { const m = await personMaskImage(c); if (m) { const mc = document.createElement('canvas'); mc.width = m.width; mc.height = m.height; mc.getContext('2d').drawImage(m, 0, 0); rt.mask = mc; } }
     catch (e) { console.warn(e); rt.mask = null; toast('No se pudo recortar a la persona', 'err'); }
     rt.key = Date.now();
-    update(pp => { pp.thumb = { ...curThumb(), frameT: timeBus.t }; }, { history: false });
+    const cur = curThumb();
+    // con la plantilla "Texto detrás", el titular se recoloca detrás de la nueva cabeza
+    const fresh = cur.tpl === 'detras' ? makeThumb('detras', cur.format, cur.pal) : null;
+    update(pp => {
+      const th = { ...cur, frameT: timeBus.t };
+      if (fresh) th.layers = cur.layers.map(l => (l.behind ? { ...l, y: fresh.layers.find(f => f.behind)?.y ?? l.y } : l));
+      pp.thumb = th;
+    }, { history: false });
     previewCache.clear();
   } finally { busy(null); emit(); }
 }

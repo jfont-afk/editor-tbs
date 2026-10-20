@@ -205,6 +205,8 @@ export async function exportMP4(opts) {
 
   const t0 = performance.now();
   let i = 0;
+  // espera a que el codificador libere hueco (con el evento del propio codificador: no se frena si la pestaña pasa a segundo plano)
+  const waitQueue = () => new Promise(r => { const done = () => { clearTimeout(to); r(); }; const to = setTimeout(done, 40); venc.addEventListener('dequeue', done, { once: true }); });
   const encodeFrame = async (t, src) => {
     if (signal?.aborted) throw new DOMException('Cancelado', 'AbortError');
     if (encErr) throw encErr;
@@ -212,7 +214,7 @@ export async function exportMP4(opts) {
     const frame = new VideoFrame(canvas, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
     venc.encode(frame, { keyFrame: i % (fps * 2) === 0 });
     frame.close();
-    while (venc.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 2));
+    while (venc.encodeQueueSize > 6) await waitQueue();
     if (i % 5 === 0) {
       const el = (performance.now() - t0) / 1000;
       const eta = i > 10 ? el / (i + 1) * (N - i - 1) : null;
