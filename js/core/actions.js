@@ -327,12 +327,91 @@ export function updateClip(id, patch, key) {
   if (patch && patch.speed !== undefined) player.seek(Math.min(timeBus.t, player.duration));
 }
 
-export function duplicateClip(id) {
+// Copia del clip justo detrás del original, o en la posición "toIndex" (Alt + arrastrar)
+export function duplicateClip(id, toIndex) {
+  const nid = uid('c');
   update(p => {
     const i = p.clips.findIndex(c => c.id === id);
     if (i < 0) return;
-    p.clips.splice(i + 1, 0, { ...structuredClone(p.clips[i]), id: uid('c'), transition: null });
+    p.clips.splice(clamp(toIndex ?? i + 1, 0, p.clips.length), 0, { ...structuredClone(p.clips[i]), id: nid, transition: null });
   });
+  setUI({ sel: { type: 'clip', id: nid } });
+  player.seek(timeBus.t);
+  return nid;
+}
+
+// Sin "patch", la copia va justo detrás del original
+export function duplicateOverlay(id, patch, key) {
+  const nid = uid('o');
+  update(p => {
+    const o = p.overlays.find(x => x.id === id);
+    if (o) p.overlays.push({ ...structuredClone(o), id: nid, ...(patch || { start: o.start + o.dur }) });
+  }, { key });
+  setUI({ sel: { type: 'overlay', id: nid } });
+  return nid;
+}
+
+export function duplicateAudio(id, patch, key) {
+  const nid = uid('au');
+  update(p => {
+    const a = (p.audio || []).find(x => x.id === id);
+    if (a) p.audio.push({ ...structuredClone(a), id: nid, ...(patch || { start: a.start + (a.out - a.in) }) });
+  }, { key });
+  setUI({ sel: { type: 'audio', id: nid } });
+  player.resyncAudio();
+  return nid;
+}
+
+// Ctrl/Cmd + D: duplica lo seleccionado justo a continuación
+export function duplicateSelection() {
+  const sel = state.ui.sel;
+  if (!sel) return toast('Selecciona un clip, motion o audio para duplicarlo', 'err');
+  if (sel.type === 'clip') duplicateClip(sel.id);
+  else if (sel.type === 'overlay') duplicateOverlay(sel.id);
+  else if (sel.type === 'audio') duplicateAudio(sel.id);
+  else toast('Los bloques de subtítulos no se duplican: usa "Nuevo bloque" en Texto', 'err');
+}
+
+// Ctrl/Cmd + C / V: copia lo seleccionado y lo pega en el cursor
+let clipboard = null;
+export function copySelection() {
+  const sel = state.ui.sel, p = P();
+  const src = !sel ? null : sel.type === 'clip' ? p.clips.find(c => c.id === sel.id)
+    : sel.type === 'overlay' ? p.overlays.find(o => o.id === sel.id)
+    : sel.type === 'audio' ? (p.audio || []).find(a => a.id === sel.id) : null;
+  if (!src) return false;
+  clipboard = { type: sel.type, item: structuredClone(src) };
+  toast('Copiado. Pega con Ctrl+V en la posición del cursor', 'ok', 2500);
+  return true;
+}
+export function pasteClipboard() {
+  if (!clipboard) return false;
+  const { type, item } = clipboard, t = timeBus.t;
+  if (type === 'clip') {
+    if (!assetById(item.assetId)) return false;
+    const nid = uid('c');
+    update(p => {
+      // en un borde se inserta ahí; en mitad de un clip, se corta y la copia queda en el cursor
+      const lay = TL.layoutClips(p.clips);
+      let idx = lay.findIndex(l => t < l.end - 0.15);
+      if (idx < 0) idx = lay.length;
+      else if (t > lay[idx].start + 0.15 && TL.splitAt(p, t)) idx++;
+      p.clips.splice(idx, 0, { ...structuredClone(item), id: nid, transition: null });
+    });
+    setUI({ sel: { type: 'clip', id: nid } });
+    player.seek(t);
+  } else if (type === 'overlay') {
+    const nid = uid('o');
+    update(p => { p.overlays.push({ ...structuredClone(item), id: nid, start: t }); });
+    setUI({ sel: { type: 'overlay', id: nid } });
+  } else if (type === 'audio') {
+    if (!assetById(item.assetId)) return false;
+    const nid = uid('au');
+    update(p => { (p.audio = p.audio || []).push({ ...structuredClone(item), id: nid, start: t }); });
+    setUI({ sel: { type: 'audio', id: nid } });
+    player.resyncAudio();
+  }
+  return true;
 }
 
 // ---------- Silencios ----------
@@ -797,15 +876,6 @@ export function updateOverlay(id, patch, key) {
     if (typeof patch === 'function') patch(o);
     else for (const [k, v] of Object.entries(patch)) { if (k === 'props') o.props = { ...o.props, ...v }; else o[k] = v; }
   }, { key });
-}
-
-export function duplicateOverlay(id) {
-  update(p => {
-    const o = p.overlays.find(x => x.id === id);
-    if (!o) return;
-    const c = { ...structuredClone(o), id: uid('o'), start: o.start + o.dur };
-    p.overlays.push(c);
-  });
 }
 
 export function overlayZ(id, dir) {

@@ -46,15 +46,25 @@ window.addEventListener('drop', e => { if (!e.defaultPrevented) { e.preventDefau
 window.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+  // con la pantalla de proyectos o una tarea en marcha, los atajos del editor no actúan
+  if (state.ui.home || state.ui.busy) return;
   const k = e.key.toLowerCase();
   const fps = state.project.fps || 30;
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); player.seek(timeBus.t); return; }
   if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); redo(); player.seek(timeBus.t); return; }
   if ((e.ctrlKey || e.metaKey) && k === 's') {
     e.preventDefault();
-    import('./core/projectFolder.js').then(PF => (PF.folderActive() ? PF.saveVersion(false) : PF.saveAsFolder()));
+    import('./core/projectFolder.js').then(async PF => {
+      if (PF.folderActive()) return PF.saveVersion(false);
+      const L = await import('./core/library.js');
+      return L.lib.ws ? L.saveCurrentToLibrary() : PF.saveAsFolder();
+    });
     return;
   }
+  // Duplicar / copiar / pegar (Ctrl en Windows, Cmd en Mac)
+  if ((e.ctrlKey || e.metaKey) && k === 'd') { e.preventDefault(); A.duplicateSelection(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'c' && !String(window.getSelection() || '')) { if (A.copySelection()) e.preventDefault(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'v') { if (A.pasteClipboard()) e.preventDefault(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (k === ' ') { e.preventDefault(); player.toggle(); }
   else if (k === 's') { e.preventDefault(); A.splitAtPlayhead(); }

@@ -40,6 +40,7 @@ class Player {
     // al cambiar la selección se vuelve a dibujar (p. ej. marcos del zoom dinámico)
     subscribe(() => { if (state.ui.sel !== this._lastSel) { this._lastSel = state.ui.sel; this.dirty = true; } });
     imageHooks.onLoad = () => { this.dirty = true; };
+    this.comp.onAsync = () => { this.dirty = true; };
     const loop = () => { this.tick(); requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
   }
@@ -284,7 +285,7 @@ class Player {
     this.info = this.comp.render(this.ctx, c.width, c.height, t, src, {
       project: p, version: projectVersion, groups: captionGroups(p, projectVersion), total: this.duration,
       safeZone: state.ui.safeZone, compare: state.ui.compare, editing: !state.ui.playing, maxDim: state.ui.playing ? 1280 : 1920,
-      camEdit: zsel ? zsel.id : null,
+      camEdit: zsel ? zsel.id : null, fast: state.ui.playing,
     });
     if (this.info?.maskMissing) this.dirty = true;
     this.onInfo && this.onInfo(this.info);

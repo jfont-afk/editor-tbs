@@ -107,6 +107,8 @@ export async function detectFaces(source) {
 
 // ---- Caras ----
 const faceCache = new Map();
+/** Caras ya detectadas para ese instante (undefined si aún no se han buscado). */
+export function facesCached(assetId, srcTime) { return faceCache.get(`${assetId}@${Math.round(srcTime * 4)}`); }
 /** Cajas de cara normalizadas [{x,y,w,h}] del fotograma, con caché por intervalos de 0,25 s. */
 export function facesAt(source, assetId, srcTime) {
   const key = `${assetId}@${Math.round(srcTime * 4)}`;

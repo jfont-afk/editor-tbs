@@ -6,7 +6,7 @@ import { animIn, animOut, applyState, ease } from './anim.js';
 import { safeRect } from '../data/brand.js';
 import { groupAt, resolveStyle } from '../core/captions.js';
 import { layoutClips } from '../core/timeline.js';
-import { personMask, facesAt } from '../ai/vision.js';
+import { personMask, facesAt, facesCached } from '../ai/vision.js';
 import { trackAt, trackMedian, reframeRect } from '../ai/reframe.js';
 
 export const TRANSITIONS = [
@@ -83,6 +83,8 @@ export class Compositor {
     this.probe = mk(48, 85); this.probeCtx = this.probe.getContext('2d', { willReadFrequently: true });
     this.layoutMemo = new Map();
     this.placeMemo = new Map();
+    this.styleMemo = new Map();
+    this.faceQueue = new Set();
     this.zoomMemo = { v: -1, map: new Map() };
     this.logo = null; this.logoSrc = null;
     this.maxDim = 1920;
@@ -97,7 +99,7 @@ export class Compositor {
     img.src = dataUrl;
   }
 
-  invalidate() { this.layoutMemo.clear(); this.placeMemo.clear(); clearMetrics(); }
+  invalidate() { this.layoutMemo.clear(); this.placeMemo.clear(); this.styleMemo.clear(); clearMetrics(); }
 
   ensure(c, W, H) { if (c.width !== W || c.height !== H) { c.width = W; c.height = H; } }
 
@@ -277,7 +279,10 @@ export class Compositor {
     if (p.captions.enabled && o.groups?.length) {
       const g = groupAt(o.groups, t);
       if (g) {
-        const st = resolveStyle(p.captions, g.ov);
+        // el estilo solo cambia al editar el proyecto: se reutiliza en cada fotograma
+        const sk = `${o.version}|${g.id}`;
+        let st = this.styleMemo.get(sk);
+        if (!st) { st = resolveStyle(p.captions, g.ov); if (this.styleMemo.size > 400) this.styleMemo.clear(); this.styleMemo.set(sk, st); }
         if (!st.hidden) {
           const place = this.placeCaption(ctx, g, st, env, src, vr, o);
           cap = { g, st, L: place.L, boost: place.boost };
@@ -358,7 +363,26 @@ export class Compositor {
       let L = layoutCaption(ctx, g, st, env, posY);
       let final = true;
       if (p.captions.avoidFace && !st.ownPos && src?.el && vr && !st.behind) {
-        const faces = facesAt(src.el, src.asset.id, src.hit.src);
+        // 1) seguimiento de cara ya calculado (instantáneo) · 2) caché · 3) detección (6 ms; al reproducir, en segundo plano)
+        let faces;
+        const track = p.faceTracks?.[src.asset.id];
+        const q = track?.pts?.length ? trackAt(track, src.hit.src) : null;
+        if (track?.pts?.length) {
+          if (q && q[2] > 0 && isFinite(q[0])) {
+            const fh = q[2], fw = fh * 0.8 * (vr.sh / vr.sw);
+            faces = [{ x: q[0] - fw / 2, y: q[1] - fh * 0.42, w: fw, h: fh }];
+          } else faces = [];
+        } else if (o.fast) {
+          faces = facesCached(src.asset.id, src.hit.src);
+          if (faces === undefined) {
+            faces = null;
+            const el = src.el, id = src.asset.id, ts = src.hit.src, k = id + '@' + Math.round(ts * 4);
+            if (!this.faceQueue.has(k)) {
+              this.faceQueue.add(k);
+              (window.requestIdleCallback || setTimeout)(() => { facesAt(el, id, ts); this.faceQueue.delete(k); this.onAsync && this.onAsync(); });
+            }
+          }
+        } else faces = facesAt(src.el, src.asset.id, src.hit.src);
         if (faces === null) final = false;
         else if (faces.length) {
           const fr = faces.map(f => ({ x: vr.x + (vr.flip ? 1 - f.x - f.w : f.x) * vr.w, y: vr.y + f.y * vr.h - f.h * vr.h * 0.25, w: f.w * vr.w, h: f.h * vr.h * 1.35 }));
@@ -375,12 +399,22 @@ export class Compositor {
         }
       }
       let boost = false;
-      if (p.captions.autoReadable && !st.box?.on && st.shadow?.on) {
-        const pr = this.probeCtx;
-        pr.drawImage(this.base, 0, 0, this.probe.width, this.probe.height);
-        boost = needsBoost(st, regionLuma(pr, this.probe.width, this.probe.height, env.W, env.H, { x: L.bx, y: L.by, w: L.bw, h: L.bh }));
-      }
       m = { L, boost, posY };
+      if (final && p.captions.autoReadable && !st.box?.on && st.shadow?.on) {
+        const pr = this.probeCtx, pw = this.probe.width, ph = this.probe.height;
+        const rect = { x: L.bx, y: L.by, w: L.bw, h: L.bh };
+        if (o.fast && window.createImageBitmap) {
+          // reproduciendo: se mide el fondo sin bloquear la GPU (llega uno o dos fotogramas después)
+          const mm = m;
+          createImageBitmap(this.base, { resizeWidth: pw, resizeHeight: ph, resizeQuality: 'low' }).then(bmp => {
+            pr.drawImage(bmp, 0, 0); bmp.close();
+            if (needsBoost(st, regionLuma(pr, pw, ph, env.W, env.H, rect))) { mm.boost = true; this.onAsync && this.onAsync(); }
+          }).catch(() => {});
+        } else {
+          pr.drawImage(this.base, 0, 0, pw, ph);
+          m.boost = needsBoost(st, regionLuma(pr, pw, ph, env.W, env.H, rect));
+        }
+      }
       if (final) this.placeMemo.set(key, m);
       if (this.placeMemo.size > 800) this.placeMemo.clear();
     }

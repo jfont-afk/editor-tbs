@@ -268,7 +268,17 @@ export function Preview() {
     const k = Math.min(1, (box.w * dpr) / p.format.w);
     c.width = Math.round(p.format.w * k); c.height = Math.round(p.format.h * k);
     player.attach(c);
-    player.onInfo = (i) => setInfo(i ? { ...i, cw: c.width } : null);
+    // solo se vuelve a pintar la interfaz del reproductor si cambian las cajas (no en cada fotograma)
+    let lastKey = '';
+    const r1 = (v) => Math.round(v || 0);
+    player.onInfo = (i) => {
+      const key = !i ? '' : [i.clipId, i.cap ? [i.cap.id, r1(i.cap.x), r1(i.cap.y), r1(i.cap.w), r1(i.cap.h)].join(',') : '-',
+        i.ovs.map(o => [o.id, r1(o.x), r1(o.y), r1(o.w), r1(o.h), Math.round((o.rot || 0) * 100)].join(',')).join(';'),
+        i.vrect ? [r1(i.vrect.x), r1(i.vrect.y), r1(i.vrect.w), r1(i.vrect.h), i.vrect.tf ? [r1(i.vrect.tf.cx), r1(i.vrect.tf.cy), Math.round(i.vrect.tf.s * 100), Math.round(i.vrect.tf.r * 100)].join(',') : ''].join(',') : '-', c.width].join('|');
+      if (key === lastKey) return;
+      lastKey = key;
+      setInfo(i ? { ...i, cw: c.width } : null);
+    };
     player.requestRender();
     return () => { player.onInfo = null; };
   }, [box.w, box.h, p.format.id, !!p.clips.length]);

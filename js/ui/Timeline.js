@@ -10,7 +10,7 @@ import { Btn } from './controls.js';
 import * as A from '../core/actions.js';
 
 const HEAD = 104; // = ancho de .tl-head en css/app.css
-const H = { ruler: 26, ov: 26, cap: 34, video: 92, audio: 46 };
+const H = { ruler: 26, ov: 26, cap: 32, video: 78, audio: 40 };
 
 // Forma de onda de un audio de la pista de audio
 function AudioWave({ clip, w, pps }) {
@@ -105,6 +105,9 @@ function ClipCanvas({ clip, asset, w, pps }) {
   return html`<canvas ref=${ref}></canvas>`;
 }
 
+// Alt (Opción en Mac) o Cmd al arrastrar: duplicar en vez de mover
+const isDup = (ev) => ev.altKey || ev.metaKey;
+
 function lanes(overlays) {
   const sorted = [...overlays].sort((a, b) => a.start - b.start);
   const ends = [];
@@ -161,7 +164,7 @@ export function Timeline() {
     setUI({ pxPerSec: clamp((sc.clientWidth - HEAD - 40) / dur, 4, 400) });
   };
 
-  // Arrastrar clip (reordenar) o recortar bordes
+  // Arrastrar clip (reordenar) o recortar bordes. Con Alt (Opción / Cmd en Mac) se suelta una copia.
   const clipDown = (e, l, mode) => {
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -182,7 +185,7 @@ export function Timeline() {
         let idx = lay.findIndex(o => x < o.start + o.dur / 2);
         if (idx < 0) idx = lay.length;
         setDrop(idx);
-        setGhost({ id: l.clip.id, dx });
+        setGhost({ id: l.clip.id, dx, dup: isDup(ev) });
       }
     };
     const up = (ev) => {
@@ -193,8 +196,11 @@ export function Timeline() {
           const x = (ev.clientX - r.left + sc.scrollLeft - HEAD) / pps;
           let idx = lay.findIndex(o => x < o.start + o.dur / 2);
           if (idx < 0) idx = lay.length;
-          if (idx > l.index) idx--;
-          if (idx !== l.index) A.moveClip(l.clip.id, idx);
+          if (isDup(ev)) A.duplicateClip(l.clip.id, idx);
+          else {
+            if (idx > l.index) idx--;
+            if (idx !== l.index) A.moveClip(l.clip.id, idx);
+          }
         } else player.seek((ev.clientX - scrollRef.current.getBoundingClientRect().left + scrollRef.current.scrollLeft - HEAD) / pps);
         setDrop(null); setGhost(null);
       } else if (moved) player.seek(mode === 'l' ? l.start : Math.max(l.start, l.start + clipDur(state.project.clips.find(c => c.id === l.clip.id) || l.clip) - 0.04));
@@ -209,9 +215,13 @@ export function Timeline() {
     const sx = e.clientX, s0 = o.start, d0 = o.dur;
     const snaps = [0, timeBus.t, ...lay.map(l => l.start), dur];
     const snap = (v) => { for (const s of snaps) if (Math.abs(s - v) * pps < 7) return s; return v; };
+    let id = o.id;
+    const key = 'ovm' + o.id + sx;
     const mv = (ev) => {
       const dt = (ev.clientX - sx) / pps;
-      if (mode === 'body') A.updateOverlay(o.id, { start: Math.max(0, snap(s0 + dt)) }, 'ovm' + o.id);
+      // Alt + arrastrar: la copia se mueve y el original se queda (un solo paso de deshacer)
+      if (mode === 'body' && id === o.id && isDup(ev) && Math.abs(ev.clientX - sx) > 4) { id = A.duplicateOverlay(o.id, { start: s0 }, key); A.updateOverlay(o.id, { start: s0 }, key); }
+      if (mode === 'body') A.updateOverlay(id, { start: Math.max(0, snap(s0 + dt)) }, key);
       else if (mode === 'l') { const ns = clamp(snap(s0 + dt), 0, s0 + d0 - 0.2); A.updateOverlay(o.id, { start: ns, dur: s0 + d0 - ns }, 'ovl' + o.id); }
       else A.updateOverlay(o.id, { dur: Math.max(0.2, snap(s0 + d0 + dt) - s0) }, 'ovr' + o.id);
     };
@@ -228,9 +238,12 @@ export function Timeline() {
     const snaps = [0, timeBus.t, ...lay.map(l => l.start), dur];
     const snap = (v) => { for (const s of snaps) if (Math.abs(s - v) * pps < 7) return s; return v; };
     const full = p.assets.find(x => x.id === a.assetId)?.duration || a.out;
+    let id = a.id;
+    const key = 'aum' + a.id + sx;
     const mv = (ev) => {
       const dt = (ev.clientX - sx) / pps;
-      if (mode === 'body') A.updateAudio(a.id, { start: Math.max(0, snap(a0.start + dt)) }, 'aum' + a.id);
+      if (mode === 'body' && id === a.id && isDup(ev) && Math.abs(ev.clientX - sx) > 4) { id = A.duplicateAudio(a.id, { start: a0.start }, key); A.updateAudio(a.id, { start: a0.start }, key); }
+      if (mode === 'body') A.updateAudio(id, { start: Math.max(0, snap(a0.start + dt)) }, key);
       else if (mode === 'l') { const d = clamp(dt, -a0.in, a0.out - a0.in - 0.2); A.updateAudio(a.id, { in: a0.in + d, start: Math.max(0, a0.start + d) }, 'aul' + a.id); }
       else A.updateAudio(a.id, { out: clamp(a0.out + dt, a0.in + 0.2, full) }, 'aur' + a.id);
     };
@@ -250,7 +263,7 @@ export function Timeline() {
       <button class="tl-icon" title="Recortar inicio hasta el cursor (Q)" onClick=${() => A.trimPlayhead('in')}><${Icon} name="trimL" /></button>
       <button class="tl-icon" title="Recortar final desde el cursor (W)" onClick=${() => A.trimPlayhead('out')}><${Icon} name="trimR" /></button>
       <button class="tl-icon" title="Eliminar selección (Supr)" disabled=${!sel} onClick=${A.deleteSelection}><${Icon} name="trash" /></button>
-      ${sel?.type === 'clip' && html`<button class="tl-icon" title="Duplicar clip" onClick=${() => A.duplicateClip(sel.id)}><${Icon} name="copy" /></button>`}
+      ${sel && sel.type !== 'group' && html`<button class="tl-icon" title="Duplicar (Ctrl+D · o Alt + arrastrar)" onClick=${A.duplicateSelection}><${Icon} name="copy" /></button>`}
       <div class="top-spacer"></div>
       <span class="dim small tl-count" style="font-family:var(--font-mono);margin-right:6px;white-space:nowrap">${p.clips.length} ${p.clips.length === 1 ? 'clip' : 'clips'} · ${fmtTime(dur)}</span>
       <button class=${'tl-icon' + (p.autoZoom ? ' on' : '')} title="Zoom alterno en los cortes" onClick=${() => update(pp => { pp.autoZoom = !pp.autoZoom; })}><${Icon} name="magnet" /></button>
@@ -299,8 +312,8 @@ export function Timeline() {
             ${lay.map(l => {
               const a = p.assets.find(x => x.id === l.clip.assetId);
               const w = Math.max(6, l.dur * pps);
-              const gh = ghost?.id === l.clip.id;
-              return html`<div key=${l.clip.id} class=${'tl-clip' + (sel?.id === l.clip.id ? ' sel' : '') + (gh ? ' dragging' : '')} style=${`left:${l.start * pps}px;width:${w - 1}px${gh ? `;transform:translateX(${ghost.dx}px)` : ''}`} onPointerDown=${e => clipDown(e, l, 'body')} title="Arrastra para mover el clip · bordes para recortar">
+              const gh = ghost?.id === l.clip.id && !ghost.dup;
+              return html`<div key=${l.clip.id} class=${'tl-clip' + (sel?.id === l.clip.id ? ' sel' : '') + (gh ? ' dragging' : '')} style=${`left:${l.start * pps}px;width:${w - 1}px${gh ? `;transform:translateX(${ghost.dx}px)` : ''}`} onPointerDown=${e => clipDown(e, l, 'body')} title="Arrastra para mover el clip · Alt + arrastrar para duplicarlo · bordes para recortar">
                 ${sel?.id === l.clip.id && w > 90 && html`<span class="tl-sel-tag">Seleccionado</span>`}
                 <${ClipCanvas} clip=${l.clip} asset=${a} w=${w - 1} pps=${pps} />
                 ${w > 60 && html`<span class="name">${a?.name || ''}${runtime.assets.get(l.clip.assetId)?.status === 'analyzing' ? ' · analizando…' : ''}</span>`}
@@ -309,6 +322,7 @@ export function Timeline() {
                 <span class="tl-handle r" onPointerDown=${e => clipDown(e, l, 'r')}></span>
               </div>`;
             })}
+            ${ghost?.dup && (() => { const l = lay.find(o => o.clip.id === ghost.id); return l && html`<div class="tl-clip dragging dup" style=${`left:${l.start * pps}px;width:${Math.max(6, l.dur * pps) - 1}px;transform:translateX(${ghost.dx}px)`}><span class="dup-tag"><${Icon} name="plus" />Copia</span></div>`; })()}
             ${drop !== null && html`<div style=${`position:absolute;top:2px;bottom:2px;width:3px;border-radius:3px;background:var(--white);left:${(drop < lay.length ? lay[drop].start : dur) * pps - 1}px;z-index:5`}></div>`}
             ${(ui.silencePreview || []).map(r => html`<div class="tl-sil" style=${`left:${r.start * pps}px;width:${Math.max(2, (r.end - r.start) * pps)}px`}></div>`)}
             ${!p.clips.length && html`<div class="tl-empty" style="inset:0">Importa un vídeo para empezar</div>`}

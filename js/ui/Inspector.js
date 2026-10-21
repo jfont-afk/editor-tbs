@@ -44,7 +44,7 @@ function ClipInspector({ c }) {
       </${Section}>
       <${Section} title="Velocidad">
         <div class="stack">
-          <${Seg} small value=${c.speed || 1} onChange=${v => A.updateClip(c.id, { speed: v })} options=${[[0.5, '0,5×'], [0.75, '0,75×'], [1, '1×'], [1.25, '1,25×'], [1.5, '1,5×'], [2, '2×']]} />
+          <div class="chips-row">${[[0.5, '0,5×'], [0.75, '0,75×'], [1, '1×'], [1.25, '1,25×'], [1.5, '1,5×'], [2, '2×']].map(([v, l]) => html`<button class=${'chip' + (Math.abs((c.speed || 1) - v) < 0.001 ? ' on' : '')} onClick=${() => A.updateClip(c.id, { speed: v })}>${l}</button>`)}</div>
           <${Slider} label="Personalizada" value=${c.speed || 1} min=${0.25} max=${3} step=${0.05} format=${v => v.toFixed(2).replace('.', ',') + '×'} onInput=${v => A.updateClip(c.id, { speed: v }, 'sp' + c.id)} />
           <div class="dim small">La voz conserva su tono al exportar.</div>
         </div>
@@ -262,7 +262,7 @@ function GroupInspector({ gid }) {
 
 function Help() {
   const p = state.project;
-  const keys = [['Espacio', 'Reproducir / pausa'], ['S', 'Cortar en el cursor'], ['Q / W', 'Recortar inicio / final'], ['Supr', 'Eliminar selección'], ['← →', 'Fotograma a fotograma'], ['Mayús + ← →', 'Saltar 1 segundo'], ['Ctrl + Z / Y', 'Deshacer / rehacer'], ['Ctrl + rueda', 'Zoom de la línea de tiempo']];
+  const keys = [['Espacio', 'Reproducir / pausa'], ['S', 'Cortar en el cursor'], ['Q / W', 'Recortar inicio / final'], ['Supr', 'Eliminar selección'], ['Ctrl + D', 'Duplicar selección'], ['Alt + arrastrar', 'Duplicar en la línea de tiempo'], ['Ctrl + C / V', 'Copiar / pegar en el cursor'], ['← →', 'Fotograma a fotograma'], ['Mayús + ← →', 'Saltar 1 segundo'], ['Ctrl + Z / Y', 'Deshacer / rehacer'], ['Ctrl + rueda', 'Zoom de la línea de tiempo']];
   return html`
     <div class="insp-empty">
       <div class="ie-icon"><${Icon} name="move" /></div>
