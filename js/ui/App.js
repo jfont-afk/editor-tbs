@@ -1,5 +1,5 @@
 import { html, useState } from '../lib.js';
-import { useStore, setUI, update, undo, redo, canUndo, canRedo } from '../core/store.js';
+import { useStore, setUI, update, undo, redo, canUndo, canRedo, state } from '../core/store.js';
 import { Icon } from './icons.js';
 import { Btn, Progress } from './controls.js';
 import { Preview } from './Preview.js';
@@ -13,6 +13,8 @@ import { ColorPanel } from './panels/ColorPanel.js';
 import { EffectsPanel } from './panels/EffectsPanel.js';
 import { logoSVG } from '../data/brandLogo.js';
 import { Splitters, layout, layoutStyle, resetLayout, setWideTimeline } from './Splitters.js';
+import { Home } from './Home.js';
+import * as LIB from '../core/library.js';
 import { ThumbPanel } from './panels/ThumbPanel.js';
 import { ExportPanel } from './panels/ExportPanel.js';
 import { FORMATS } from '../data/brand.js';
@@ -42,7 +44,9 @@ function ProjectMenu() {
     </button>
     ${open && html`<div class="pm-pop" onMouseLeave=${() => setOpen(false)}>
       <div class="pm-status">${fs.name ? html`Carpeta: <b>${fs.name}</b> · ${status}` : html`Guarda el proyecto en una carpeta para tener <b>brutos, versiones y exportaciones</b> en tu disco, como en Premiere o DaVinci.`}</div>
-      <button onClick=${run(PF.saveAsFolder)}><${Icon} name="save" />${fs.name ? 'Guardar como en otra carpeta…' : 'Guardar en una carpeta…'}</button>
+      ${!fs.name && html`<button onClick=${run(LIB.saveCurrentToLibrary)}><${Icon} name="save" />Guardar en Proyectos${LIB.lib.ws ? ` (${LIB.lib.ws.name})` : '…'}</button>`}
+      ${fs.name && PF.currentDir() && html`<button onClick=${run(() => LIB.exportZip({ name: PF.currentDir().name, title: state.project.name, handle: PF.currentDir() }))}><${Icon} name="share" />Compartir este proyecto (.zip)</button>`}
+      <button onClick=${run(PF.saveAsFolder)}><${Icon} name="save" />${fs.name ? 'Guardar como en otra carpeta…' : 'Guardar en otra carpeta…'}</button>
       <button onClick=${run(() => PF.openFolder())}><${Icon} name="folder" />Abrir proyecto…</button>
       ${fs.name && html`<button onClick=${run(() => PF.saveVersion(false))}><${Icon} name="copy" />Guardar versión <span class="kbd">Ctrl+S</span></button>
         <button onClick=${async () => setVersions(await PF.listVersions())}><${Icon} name="undo" />Versiones anteriores…</button>`}
@@ -73,6 +77,7 @@ function TopBar({ s }) {
       <span class="brand-sub">Editor</span>
     </div>
     <span class="top-sep"></span>
+    <${Btn} cls="sm ghost" icon="home" title="Pantalla de proyectos" onClick=${async () => { await PF.savePortada(); setUI({ home: true }); }}>Proyectos</${Btn}>
     <${ProjectMenu} />
     <input class="proj-name" value=${p.name} onChange=${e => update(pp => { pp.name = e.target.value || 'Proyecto sin título'; })} title="Nombre del proyecto" />
     <div class="top-spacer"></div>
@@ -154,6 +159,7 @@ export function App() {
     <aside class="insp"><button class="btn sm ghost insp-close" onClick=${() => setUI({ sel: null })}><${Icon} name="chevronRight" style="transform:rotate(180deg)" />Volver a ${tab.name}</button><${Inspector} /></aside>
     ${s.ui.tab === 'thumb' ? html`<${ThumbPanel.Stage} />` : html`<${Preview} />`}
     <${Timeline} />
+    ${s.ui.home && html`<${Home} />`}
     <${BusyModal} b=${s.ui.busy} />
     ${!s.ui.busy && html`<${RestoreModal} r=${s.ui.restore} />`}
     <div class="toasts">${s.ui.toasts.map(t => html`<div class=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}>${t.text}</div>`)}</div>

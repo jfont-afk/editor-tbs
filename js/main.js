@@ -73,7 +73,7 @@ window.__editor = {
   state, actions: A, player, timeBus, runtime,
   // carga rápida del vídeo de pruebas (solo desarrollo)
   async loadTest(name = 'usuario2.mp4') {
-    if (state.ui.restore) (await import('./core/persist.js')).discardRestore();
+    if (state.ui.restore || state.ui.home) (await import('./core/persist.js')).discardRestore();
     if (!state.project.assets.length) {
       const b = await (await fetch('/_pruebas/' + name)).blob();
       const real = name === 'usuario.mp4' ? '2026-10-02-132102806.mp4' : name === 'usuario2.mp4' ? '20261019_132003.mp4' : name;
@@ -121,4 +121,5 @@ window.__editor = {
   await loadFonts();
   render(html`<${App} />`, document.getElementById('app'));
   initPersistence();
+  import('./core/library.js').then(m => m.initLibrary());
 })();

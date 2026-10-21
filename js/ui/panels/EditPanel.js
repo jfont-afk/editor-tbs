@@ -123,6 +123,25 @@ function HeadFrame() {
   </div>`;
 }
 
+// Montaje avanzado: persona duplicada (dos tomas con el trípode quieto, una a cada lado)
+function DualMontage() {
+  const p = state.project;
+  const vids = p.assets.filter(a => a.kind === 'video');
+  const [l, setL] = useState(vids[0]?.id || '');
+  const [r, setR] = useState(vids[1]?.id || '');
+  const [pauses, setPauses] = useState(true);
+  if (vids.length < 2) return html`<div class="stack"><div class="dim small" style="line-height:1.5">Importa las <b>dos tomas</b> grabadas con el trípode quieto: una con la persona a la izquierda (dejando hueco a la derecha) y otra a la derecha. El editor detecta quién está en cada lado, alinea las tomas para que os respondáis y junta las dos mitades con la unión difuminada.</div><${Btn} icon="upload" onClick=${() => window.__openFiles()}>Importar las tomas</${Btn}></div>`;
+  const opts = vids.map(a => html`<option value=${a.id}>${a.name}</option>`);
+  return html`<div class="stack">
+    <div class="dim small" style="line-height:1.5">Dos tomas con el trípode quieto: tú a la izquierda en una y a la derecha en la otra. Detecto el lado de cada una (aunque las elijas al revés), las alineo para que os respondáis y uno las mitades con un difuminado en el centro.</div>
+    <label class="field"><span class="field-label">Toma A</span><select class="select" value=${l} onChange=${e => setL(e.target.value)}>${opts}</select></label>
+    <label class="field"><span class="field-label">Toma B</span><select class="select" value=${r} onChange=${e => setR(e.target.value)}>${opts}</select></label>
+    <${Toggle} label="Quitar las pausas en las que no habla nadie" value=${pauses} onChange=${setPauses} />
+    <${Btn} cls="primary" icon="columns" disabled=${!l || !r || l === r} onClick=${() => A.createDualMontage({ leftId: l, rightId: r, removePauses: pauses })}>Crear montaje automático</${Btn}>
+    <div class="dim small">Sustituye los clips de la línea de tiempo por el montaje. Después, selecciona el clip para ajustar la unión, el difuminado, la luz y el desfase.</div>
+  </div>`;
+}
+
 export function EditPanel() {
   const p = state.project;
   return html`
@@ -150,5 +169,6 @@ export function EditPanel() {
         </div>
       </${Section}>
       <${Section} collapsible open=${false} icon="text" title="Editar con el texto"><${TextEdit} /></${Section}>
+      <${Section} collapsible open=${false} icon="columns" title="Montaje avanzado · Persona duplicada"><${DualMontage} /></${Section}>
     </div>`;
 }

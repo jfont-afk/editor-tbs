@@ -7,7 +7,7 @@ import { Btn } from './controls.js';
 import * as A from '../core/actions.js';
 import { MOTIONS } from '../render/motions.js';
 import { captionGroups, resolveStyle } from '../core/captions.js';
-import { ZOOM_FROM, ZOOM_TO } from '../render/compositor.js';
+import { ZOOM_FROM, ZOOM_TO, placedBox } from '../render/compositor.js';
 
 function Timecode() {
   const [t, setT] = useState(timeBus.t);
@@ -174,6 +174,55 @@ function OverlayTextEditor({ ov, rect, scale, boxW }) {
   </div>`;
 }
 
+// Clip seleccionado: marco rojo con tiradores (tamaño, giro) y, en modo recorte, bordes que recortan
+function ClipBox({ edit, scale, cw, ch, crop, onMoveStart }) {
+  const { box: b, vr, clip } = edit;
+  const w = Math.abs(b.w) * scale, h = Math.abs(b.h) * scale;
+  const style = `left:${b.x * scale - w / 2}px;top:${b.y * scale - h / 2}px;width:${w}px;height:${h}px;transform:rotate(${b.rot}rad)`;
+  const drag = (kind) => (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const wrap = e.currentTarget.closest('.preview-wrap').getBoundingClientRect();
+    const cx = wrap.left + b.full.x * scale, cy = wrap.top + b.full.y * scale;
+    const sx = e.clientX, sy = e.clientY;
+    const tf0 = { x: 0, y: 0, s: 1, r: 0, ...(clip.tf || {}) };
+    const c0 = { l: 0, r: 0, t: 0, b: 0, ...(clip.crop || {}) };
+    const cos = Math.cos(tf0.r), sin = Math.sin(tf0.r);
+    const move = (ev) => {
+      if (kind === 'scale') {
+        const d0 = Math.hypot(sx - cx, sy - cy), d1 = Math.hypot(ev.clientX - cx, ev.clientY - cy);
+        A.updateClip(clip.id, { tf: { ...tf0, s: clamp(tf0.s * d1 / Math.max(1, d0), 0.1, 6) } }, 'ctfs' + clip.id);
+      } else if (kind === 'rot') {
+        let a = Math.atan2(ev.clientY - cy, ev.clientX - cx) + Math.PI / 2;
+        for (const s of [0, Math.PI / 2, -Math.PI / 2, Math.PI]) if (Math.abs(a - s) < 0.05) a = s;
+        A.updateClip(clip.id, { tf: { ...tf0, r: a } }, 'ctfr' + clip.id);
+      } else {
+        // recorte: desplazamiento a lo largo del eje del clip (girado)
+        const dx = (ev.clientX - sx) / scale, dy = (ev.clientY - sy) / scale;
+        const ax = (dx * cos + dy * sin) / (vr.w * tf0.s), ay = (-dx * sin + dy * cos) / (vr.h * tf0.s);
+        const n = { ...c0 };
+        const L = vr.flip ? 'r' : 'l', R = vr.flip ? 'l' : 'r';
+        if (kind === 'cl') n[L] = clamp(c0[L] + ax, 0, 0.92 - c0[R]);
+        if (kind === 'cr') n[R] = clamp(c0[R] - ax, 0, 0.92 - c0[L]);
+        if (kind === 'ct') n.t = clamp(c0.t + ay, 0, 0.92 - c0.b);
+        if (kind === 'cb') n.b = clamp(c0.b - ay, 0, 0.92 - c0.t);
+        A.updateClip(clip.id, { crop: n }, 'ccrop' + clip.id);
+      }
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  return html`<div class=${'clip-box' + (crop ? ' crop' : '')} style=${style} onPointerDown=${onMoveStart}>
+    <span class="sel-name">${crop ? 'Recortar · arrastra los bordes' : 'Clip · arrastra para mover'}</span>
+    ${crop ? html`
+      <span class="ce l" onPointerDown=${drag('cl')}></span><span class="ce r" onPointerDown=${drag('cr')}></span>
+      <span class="ce t" onPointerDown=${drag('ct')}></span><span class="ce b" onPointerDown=${drag('cb')}></span>`
+    : html`
+      <span class="h tl" title="Tamaño" onPointerDown=${drag('scale')}></span><span class="h tr" title="Tamaño" onPointerDown=${drag('scale')}></span>
+      <span class="h bl" title="Tamaño" onPointerDown=${drag('scale')}></span><span class="h br" title="Tamaño" onPointerDown=${drag('scale')}></span>
+      <span class="h rot" title="Girar" onPointerDown=${drag('rot')}></span>`}
+  </div>`;
+}
+
 // Barra flotante con las acciones del elemento seleccionado
 function SelTools({ rect, scale, boxW, boxH, children }) {
   if (!rect) return null;
@@ -191,6 +240,8 @@ export function Preview() {
   const [box, setBox] = useState({ w: 270, h: 480 });
   const [info, setInfo] = useState(null);
   const [guides, setGuides] = useState([]);
+  const [cropMode, setCropMode] = useState(false);
+  useEffect(() => { if (ui.sel?.type !== 'clip') setCropMode(false); }, [ui.sel?.id]);
   const scaleStart = useRef(null);
 
   useLayoutEffect(() => {
@@ -292,8 +343,37 @@ export function Preview() {
     if (!info) return;
     const hit = hitTest(e);
     if (hit) { beginMove(e, hit); return; }
-    if (sel?.type !== 'clip') setUI({ sel: null });
+    // clic en el vídeo: primero se selecciona el clip; si ya lo está, se arrastra
+    if (info.clipId) {
+      if (sel?.type === 'clip' && sel.id === info.clipId) beginClipMove(e);
+      else setUI({ sel: { type: 'clip', id: info.clipId } });
+      return;
+    }
+    setUI({ sel: null });
   };
+
+  // ---- Clip: mover, escalar, girar y recortar en el reproductor ----
+  const selClip = sel?.type === 'clip' && info?.clipId === sel.id && info?.vrect ? p.clips.find(c => c.id === sel.id) : null;
+  function beginClipMove(e) {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const c = p.clips.find(x => x.id === sel.id); if (!c) return;
+    const W = cw, H = ch;
+    const t0 = { x: c.tf?.x || 0, y: c.tf?.y || 0 };
+    const sx = e.clientX, sy = e.clientY;
+    let moved = false;
+    const move = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+      moved = true;
+      let nx = t0.x + (ev.clientX - sx) / scale / W, ny = t0.y + (ev.clientY - sy) / scale / H;
+      const gs = [];
+      if (state.ui.snap && !ev.altKey) { if (Math.abs(nx) < 0.012) { nx = 0; gs.push({ x: W / 2 }); } if (Math.abs(ny) < 0.012) { ny = 0; gs.push({ y: H / 2 }); } }
+      setGuides(gs);
+      A.updateClip(c.id, cc => ({ tf: { x: 0, y: 0, s: 1, r: 0, ...(cc.tf || {}), x: nx, y: ny } }), 'ctfmove' + c.id);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setGuides([]); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  }
   const onCanvasDbl = (e) => {
     if (!info) return;
     const hit = hitTest(e);
@@ -307,7 +387,7 @@ export function Preview() {
   };
 
   // Selección actual
-  let selRect = null, selLabel = null, onScale = null, onRotate = null, rot = 0, tools = null, moveStart = null, dbl = null, zoomEdit = null;
+  let selRect = null, selLabel = null, onScale = null, onRotate = null, rot = 0, tools = null, moveStart = null, dbl = null, zoomEdit = null, clipEdit = null;
   const end = () => { scaleStart.current = null; };
   const selOv = sel?.type === 'overlay' ? p.overlays.find(o => o.id === sel.id) : null;
   if (selOv?.type === 'zoom' && (selOv.props.mode === 'dinamico' || selOv.props.follow)) {
@@ -348,6 +428,17 @@ export function Preview() {
         <button class="st-btn danger" title="Eliminar (Supr)" onClick=${A.deleteSelection}><${Icon} name="trash" /></button>
       </${SelTools}>`;
     }
+  } else if (selClip) {
+    const c = selClip;
+    const bx = placedBox(info.vrect);
+    clipEdit = { box: bx, vr: info.vrect, clip: c };
+    tools = html`<${SelTools} rect=${{ x: bx.x, y: bx.y, w: Math.abs(bx.w), h: Math.abs(bx.h) }} scale=${scale} boxW=${box.w} boxH=${box.h}>
+      <button class=${'st-btn' + (cropMode ? ' on' : '')} title="Recortar el encuadre" onClick=${() => setCropMode(!cropMode)}><${Icon} name="crop" /><span>Recortar</span></button>
+      <button class=${'st-btn' + (c.bg?.remove ? ' on' : '')} title="Quitar el fondo (IA): deja solo a la persona" onClick=${() => A.updateClip(c.id, { bg: { fill: 'blur', ...(c.bg || {}), remove: !c.bg?.remove } })}><${Icon} name="userBehind" /><span>Quitar fondo</span></button>
+      <button class=${'st-btn' + (c.flipX ? ' on' : '')} title="Espejo" onClick=${() => A.updateClip(c.id, { flipX: !c.flipX })}><${Icon} name="flip" /></button>
+      <button class="st-btn" title="Restablecer posición, tamaño, giro y recorte" onClick=${() => { A.updateClip(c.id, { tf: null, crop: null }); setCropMode(false); }}><${Icon} name="reset" /></button>
+      <button class=${'st-btn' + (ui.snap ? ' on' : '')} title="Imán al centro" onClick=${() => setUI({ snap: !ui.snap })}><${Icon} name="magnet" /></button>
+    </${SelTools}>`;
   } else if (info?.cap && (sel?.type === 'group' || ui.tab === 'captions')) {
     const gid = info.cap.id;
     const g = groups.find(x => x.id === gid);
@@ -411,6 +502,7 @@ export function Preview() {
             ? html`<div class=${'snap-guide v' + (gd.safe ? ' safe' : '')} style=${`left:${gd.x * scale}px`}></div>`
             : html`<div class=${'snap-guide h' + (gd.safe ? ' safe' : '')} style=${`top:${gd.y * scale}px`}></div>`)}
           ${zoomEdit && html`<${ZoomFrames} ov=${zoomEdit} cw=${cw} ch=${ch} scale=${scale} />`}
+          ${clipEdit && html`<${ClipBox} edit=${clipEdit} scale=${scale} cw=${cw} ch=${ch} crop=${cropMode} onMoveStart=${beginClipMove} />`}
           ${!editing && html`<${SelectionBox} rect=${selRect} scale=${scale} label=${tools ? null : selLabel} onMoveStart=${moveStart} onScale=${onScale} onRotate=${onRotate} onEnd=${end} onDblClick=${dbl} rot=${rot} />`}
           ${!editing && tools}
           ${editing && !editOv && html`<${CaptionTextEditor} key=${ui.editCap} gid=${ui.editCap} rect=${capRectFor(ui.editCap)} scale=${scale} boxW=${box.w} />`}

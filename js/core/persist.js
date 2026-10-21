@@ -31,33 +31,40 @@ const save = debounce(async () => {
     const p = state.project;
     const handles = {};
     for (const a of p.assets) { const h = runtime.assets.get(a.id)?.handle; if (h) handles[a.id] = h; }
-    await put('project', { json: JSON.stringify(p), handles, savedAt: Date.now() });
+    const { folderActive } = await import('./projectFolder.js');
+    await put('project', { json: JSON.stringify(p), handles, savedAt: Date.now(), folder: folderActive() });
   } catch (e) { console.warn('autoguardado', e); }
 }, 1200);
 
+// Al arrancar se muestra la pantalla de proyectos; el autoguardado del navegador aparece ahí como
+// "último proyecto" y no se sobrescribe hasta que se elige qué abrir.
 export async function initPersistence() {
   onProjectChange(save);
+  let auto = null;
   try {
-    const folder = await get('lastFolder');
-    if (folder && !state.project.assets.length) {
-      setUI({ restore: { folder, project: null } });
-      return;
-    }
-    const saved = await get('project');
-    if (saved?.json) {
+    for (const key of ['project', 'project_unsaved']) {
+      const saved = await get(key);
+      if (!saved?.json) continue;
       const p = JSON.parse(saved.json);
-      if (p.assets?.length && !state.project.assets.length) {
-        setUI({ restore: { project: p, handles: saved.handles || {}, savedAt: saved.savedAt } });
-        return; // se activa el guardado al decidir
-      }
+      if (p.assets?.length && !state.project.assets.length && !saved.folder) { auto = { project: p, handles: saved.handles || {}, savedAt: saved.savedAt }; break; }
     }
   } catch (e) { console.warn(e); }
+  const lastFolder = await get('lastFolder').catch(() => null);
+  setUI({ home: true, homeAuto: auto, homeLastFolder: lastFolder || null });
+  if (!auto) ready = true;
+}
+// Antes de empezar a autoguardar otro proyecto, el último sin carpeta se aparta para no perderlo
+export async function enableAutosave() {
+  if (!ready && state.ui.homeAuto) {
+    const a = state.ui.homeAuto;
+    try { await put('project_unsaved', { json: JSON.stringify(a.project), handles: a.handles || {}, savedAt: a.savedAt }); } catch (e) { console.warn(e); }
+  }
   ready = true;
 }
 
-export function discardRestore() {
-  setUI({ restore: null });
-  ready = true;
+export async function discardRestore() {
+  setUI({ restore: null, home: false });
+  await enableAutosave();
   save();
 }
 
@@ -67,9 +74,9 @@ async function attach(asset, file, handle) {
   analyzeAsset(asset);
 }
 
-export async function restoreProject() {
-  const r = state.ui.restore;
+export async function restoreProject(r = state.ui.restore || state.ui.homeAuto) {
   if (!r) return;
+  setUI({ home: false });
   state.project = r.project;
   resetHistory();
   const missing = [];

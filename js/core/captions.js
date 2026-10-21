@@ -6,16 +6,25 @@ export function timelineWords(p) {
   const out = [];
   for (const l of layoutClips(p.clips)) {
     const c = l.clip;
-    const tr = p.transcripts[c.assetId];
-    if (!tr) continue;
     const sp = c.speed || 1;
-    for (const w of tr.words) {
-      if (w.del) continue;
-      const mid = (w.start + w.end) / 2;
-      if (mid < c.in || mid >= c.out) continue;
-      const a = Math.max(w.start, c.in), b = Math.min(w.end, c.out);
-      out.push({ w, ts: l.start + (a - c.in) / sp, te: l.start + (Math.max(b, a + 0.04) - c.in) / sp, clipId: c.id });
+    // la toma principal y, en el montaje de persona duplicada, también la otra (con su desfase)
+    const sources = [{ id: c.assetId, off: 0 }];
+    if (c.dual && c.dual.audio !== 'a') sources.push({ id: c.dual.assetId, off: c.dual.off || 0 });
+    if (c.dual?.audio === 'b') sources.shift();
+    const before = out.length;
+    for (const s of sources) {
+      const tr = p.transcripts[s.id];
+      if (!tr) continue;
+      const cin = c.in + s.off, cout = c.out + s.off;
+      for (const w of tr.words) {
+        if (w.del) continue;
+        const mid = (w.start + w.end) / 2;
+        if (mid < cin || mid >= cout) continue;
+        const a = Math.max(w.start, cin), b = Math.min(w.end, cout);
+        out.push({ w, ts: l.start + (a - cin) / sp, te: l.start + (Math.max(b, a + 0.04) - cin) / sp, clipId: c.id });
+      }
     }
+    if (sources.length > 1) { const part = out.splice(before).sort((x, y) => x.ts - y.ts); out.push(...part); }
   }
   return out;
 }
@@ -55,6 +64,9 @@ export function groupWords(words, s) {
     const hold = last.te + 0.45;
     g.end = next ? Math.min(next.items[0].ts, Math.max(last.te, Math.min(hold, next.items[0].ts))) : hold;
     if (next && next.items[0].ts - last.te < 0.35) g.end = next.items[0].ts;
+    // con palabras muy destacadas (título), el bloque se queda al menos 0,9 s para que se lea
+    const hero = g.items.find(x => x.w.hl === 2);
+    if (hero) g.end = Math.max(g.end, hero.ts + 0.9);
     // solo se desvanece si después hay un hueco (si no, corte limpio sin parpadeo)
     g.fadeOut = !next || next.items[0].ts - g.end > 0.05;
     g.ov = g.items.find(x => x.w.gs)?.w.gs || null;
@@ -107,6 +119,7 @@ export function resolveStyle(settings, ov) {
   if (ov?.hlColor) st.hl = { ...st.hl, color: ov.hlColor };
   if (ov?.anim) st.anim = ov.anim;
   if (ov?.reveal) st.reveal = ov.reveal;
+  if (ov?.heroMode) st.heroMode = ov.heroMode;
   if (ov?.upper === 'on') st.font.upper = true;
   if (ov?.upper === 'off') st.font.upper = false;
   deepMerge(st, ov?.style);

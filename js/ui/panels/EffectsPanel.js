@@ -19,6 +19,13 @@ const ZOOMS = [
   { id: 'dinamico', name: 'Zoom dinámico', sub: 'Marco inicial → final, como DaVinci', icon: 'frame', dur: 3, props: { mode: 'dinamico', speed: 'lento', curve: 'suave' } },
 ];
 
+// Hooks: zooms pensados para los 1–3 primeros segundos
+const HOOKS = [
+  { id: 'impacto', name: 'Golpe de impacto', sub: 'Entra de golpe en la cara nada más empezar', icon: 'zap', dur: 1.4, props: { mode: 'golpe', amount: 1.32, speed: 'rapido', curve: 'rapido' } },
+  { id: 'abre', name: 'Entrada que se abre', sub: 'Empieza muy cerca y se abre rápido', icon: 'zoomOut', dur: 0.9, props: { mode: 'out', amount: 1.5, speed: 'normal', curve: 'frena' } },
+  { id: 'empuje', name: 'Empuje continuo', sub: 'Se acerca poco a poco durante 3 s', icon: 'zoomIn', dur: 3, props: { mode: 'in', amount: 1.2, speed: 'lento', curve: 'lineal' } },
+];
+
 export function EffectsPanel() {
   const p = state.project, ui = state.ui;
   const selClip = ui.sel?.type === 'clip' ? p.clips.find(c => c.id === ui.sel.id) : null;
@@ -52,12 +59,36 @@ export function EffectsPanel() {
     player.seek(t + 0.05);
   };
 
+  // Hook: zoom en los primeros segundos (siempre empieza en 0)
+  const addHook = async (h) => {
+    if (!p.clips.length) return;
+    const total = player.duration || 10;
+    const o = { id: uid('o'), type: 'zoom', start: 0, dur: Math.min(h.dur, total), x: 0.5, y: 0.42, scale: 1, rot: 0, props: { ...h.props, follow }, animIn: 'none', animOut: 'none', behind: false, hook: true };
+    update(pp => { pp.overlays = pp.overlays.filter(x => !(x.type === 'zoom' && x.hook)); pp.overlays.push(o); });
+    setUI({ sel: { type: 'overlay', id: o.id } });
+    if (follow && !p.assets.every(a => a.kind !== 'video' || p.faceTracks?.[a.id])) { try { await A.ensureFaceTracks(); } catch (e) { console.error(e); } }
+    player.seek(0); player.play();
+    toast('Hook añadido al inicio');
+  };
+  const hasHook = p.overlays.some(x => x.type === 'zoom' && x.hook);
+
   return html`
     <div class="panel-head">
       <h2 class="panel-title">Efectos</h2>
       <p class="panel-desc">Zooms de cámara y acabado de la imagen.</p>
     </div>
     <div class="panel-body">
+      <${Section} title="Hook · primeros segundos" hint="engancha desde el primer fotograma">
+        <div class="stack">
+          <div class="zoom-grid">
+            ${HOOKS.map(h => html`<button class="zoom-card hook" disabled=${!p.clips.length} onClick=${() => addHook(h)}>
+              <span class="zc-ico"><${Icon} name=${h.icon} /></span>
+              <span class="zc-txt"><b>${h.name}</b><small>${h.sub}</small></span>
+            </button>`)}
+          </div>
+          ${hasHook && html`<div class="row" style="gap:6px"><span class="dim small grow">Hay un hook al inicio (se sustituye si eliges otro).</span><${Btn} cls="sm ghost" onClick=${() => update(pp => { pp.overlays = pp.overlays.filter(x => !(x.type === 'zoom' && x.hook)); })}>Quitar</${Btn}></div>`}
+        </div>
+      </${Section}>
       <${Section} title="Zoom de cámara" hint="se añade en el cursor">
         <div class="stack">
           <${Toggle} label="Encuadrar hacia la cara" sub="El zoom se acerca a la cabeza y la sigue (IA)" value=${follow} onChange=${setFollow} />

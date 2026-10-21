@@ -4,7 +4,7 @@ import { FORMATS } from '../data/brand.js';
 // ---------- Estado ----------
 export const defaultCaptions = () => ({
   enabled: true,
-  template: 'tbs-editorial',
+  template: 'v2-fluor',
   wordsPerGroup: 4,
   maxChars: 26,
   breakOnPunct: true,
@@ -37,6 +37,7 @@ export function newProject() {
     assets: [],                 // {id, name, kind, duration, width, height, hasAudio, size, lastModified}
     clips: [],                  // pista principal magnética
     overlays: [],               // motions y textos
+    audio: [],                  // pista de audio libre: {id, assetId, start, in, out, volume} (micro externo, música…)
     transcripts: {},            // assetId -> { lang, words:[{id,text,start,end,hl,br,gs}] }
     faceTracks: {},             // assetId -> { step, pts:[[x,y,size]] } (auto-encuadre de cabeza)
     captions: defaultCaptions(),

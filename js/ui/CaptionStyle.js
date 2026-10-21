@@ -4,7 +4,7 @@ import { Btn, Section, Slider, Toggle, Seg, Select, Swatches } from './controls.
 import { Icon } from './icons.js';
 import * as A from '../core/actions.js';
 import { captionGroups, resolveStyle } from '../core/captions.js';
-import { ANIMS, OUTS, REVEALS, ACTIVES, LAYOUTS, CAPTION_TEMPLATES, allTemplates, saveUserTemplate, getTemplate } from '../data/captionTemplates.js';
+import { ANIMS, OUTS, REVEALS, ACTIVES, LAYOUTS, CAPTION_TEMPLATES, allTemplates, saveUserTemplate, getTemplate, HERO_MODES, HERO_ANIMS } from '../data/captionTemplates.js';
 import { F, FONT_CHOICES } from '../data/brand.js';
 import { player } from '../engine/player.js';
 
@@ -49,14 +49,25 @@ function TextTab({ st, set, scope }) {
     <${Slider} label="Interletrado" value=${st.font.ls ?? 0} min=${-0.12} max=${0.25} step=${0.005} center format=${v => (v * 100).toFixed(1).replace('.', ',') + '%'} onInput=${v => set('font.ls', v)} />
     <${Slider} label="Interlineado" value=${st.font.lh ?? 1.15} min=${0.75} max=${1.8} step=${0.01} format=${v => v.toFixed(2).replace('.', ',')} onInput=${v => set('font.lh', v)} />
     <${Swatches} label="Color del texto" value=${st.color} onChange=${v => set('color', v)} />
-    <div class="sub-title">Palabras destacadas</div>
-    <${Swatches} label="Destacado 1 (clic)" value=${st.hl?.color} onChange=${v => set('hl.color', v)} />
+    <div class="sub-title">Palabra destacada <span class="dim small">(1 clic en la palabra · mismo tamaño)</span></div>
+    <${Swatches} label="Color" value=${st.hl?.color} onChange=${v => set('hl.color', v)} />
+    <${Select} label="Tipografía" value=${st.hl?.family || ''} options=${[['', 'La misma'], [F.serif, 'Playfair Display itálica'], [F.head, 'Space Grotesk'], [F.body, 'Raleway'], [F.mono, 'Geist Mono']]}
+      onChange=${v => { set('hl.family', v || undefined); set('hl.style', v === F.serif ? 'italic' : undefined); set('hl.weight', v ? (v === F.serif ? 600 : 700) : undefined); }} />
+    <div class="sub-title">Palabra muy destacada <span class="dim small">(2 clics · título a todo el ancho)</span></div>
+    <div class="field"><span class="field-label">Cómo aparece</span>
+      <${Seg} small value=${st.heroMode || 'stack'} onChange=${v => set('heroMode', v)} options=${HERO_MODES} /></div>
+    <${Swatches} label="Color del título" value=${st.hero?.color} onChange=${v => set('hero.color', v)} />
     <div class="grid2">
-      <${Select} label="Tipografía" value=${st.hl?.family || ''} options=${[['', 'Igual'], [F.serif, 'Playfair itálica'], [F.script, 'Sacramento'], [F.head, 'Space Grotesk'], [F.body, 'Raleway']]}
-        onChange=${v => { set('hl.family', v || undefined); set('hl.style', v === F.serif ? 'italic' : undefined); set('hl.weight', v === F.script ? 400 : v ? 600 : undefined); }} />
-      <${Select} label="Tamaño" value=${String(st.hl?.scale || 1)} options=${[['1', 'Igual'], ['1.15', '+15%'], ['1.3', '+30%'], ['1.6', '+60%'], ['2.3', 'Enorme']]} onChange=${v => set('hl.scale', parseFloat(v))} />
+      <${Select} label="Tipografía" value=${st.hero?.family || F.head} options=${[[F.head, 'Space Grotesk'], [F.serif, 'Playfair itálica'], [F.body, 'Raleway']]}
+        onChange=${v => { set('hero.family', v); set('hero.style', v === F.serif ? 'italic' : 'normal'); set('hero.weight', v === F.body ? 900 : v === F.serif ? 600 : 700); }} />
+      <${Select} label="Animación" value=${st.hero?.anim || 'mask'} options=${HERO_ANIMS} onChange=${v => set('hero.anim', v)} />
     </div>
-    <${Swatches} label="Destacado 2 (segundo clic en la palabra)" value=${st.hl2?.color} onChange=${v => set('hl2.color', v)} />
+    <div class="row" style="gap:6px">
+      <button class=${'btn sm' + (st.hero?.upper ? ' on' : '')} onClick=${() => set('hero.upper', !st.hero?.upper)} title="Mayúsculas">AA</button>
+      <button class=${'btn sm' + (st.hero?.underline ? ' on' : '')} onClick=${() => { set('hero.underline', !st.hero?.underline); if (!st.hero?.line) set('hero.line', '#daff0a'); }}>Subrayado</button>
+      <button class=${'btn sm' + (st.hero?.glow ? ' on' : '')} onClick=${() => set('hero.glow', !st.hero?.glow)}>Brillo</button>
+    </div>
+    ${st.hero?.underline && html`<${Swatches} label="Color del subrayado" value=${st.hero?.line} onChange=${v => set('hero.line', v)} />`}
     <div class="sub-title">Maquetación</div>
     <${Seg} small value=${st.align} onChange=${v => set('align', v)} options=${[['left', 'Izquierda'], ['center', 'Centro'], ['right', 'Derecha']]} />
     <${Select} value=${st.layout} options=${LAYOUTS.map(l => [l.id, l.name])} onChange=${v => set('layout', v)} />

@@ -20,6 +20,40 @@ export const TRANSITIONS = [
 
 const mk = (w = 2, h = 2) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
 
+/**
+ * Dibuja una imagen de la fuente (fotograma o máscara, que comparten encuadre) en su sitio:
+ * espejo, recorte (fracciones de la fuente) y transformación libre (centro, escala, giro).
+ */
+export function drawPlaced(g, img, vr, iw, ih) {
+  const c = vr.crop;
+  const cl = c?.l || 0, cr = c?.r || 0, ct = c?.t || 0, cb = c?.b || 0;
+  const sx = cl * iw, sy = ct * ih, sW = Math.max(1, iw * (1 - cl - cr)), sH = Math.max(1, ih * (1 - ct - cb));
+  const fx = vr.x + vr.w / 2, fy = vr.y + vr.h / 2;
+  // con espejo, el recorte izquierdo de la fuente se ve a la derecha
+  const rx = (vr.flip ? -(vr.w / 2) + cr * vr.w : -(vr.w / 2) + cl * vr.w), ry = -(vr.h / 2) + ct * vr.h;
+  const dw = vr.w * (1 - cl - cr), dh = vr.h * (1 - ct - cb);
+  const T = vr.tf;
+  g.save();
+  g.translate(T ? T.cx : fx, T ? T.cy : fy);
+  if (T?.r) g.rotate(T.r);
+  if (T && T.s !== 1) g.scale(T.s, T.s);
+  if (vr.flip) {
+    g.scale(-1, 1);
+    g.drawImage(img, sx, sy, sW, sH, -(rx + dw), ry, dw, dh);
+  } else g.drawImage(img, sx, sy, sW, sH, rx, ry, dw, dh);
+  g.restore();
+}
+
+// Rectángulo visible del clip (con recorte y transformación) en px del lienzo, para la caja de selección
+export function placedBox(vr) {
+  const c = vr.crop;
+  const cl = c?.l || 0, cr = c?.r || 0, ct = c?.t || 0, cb = c?.b || 0;
+  const s = vr.tf?.s || 1;
+  const fx = vr.tf ? vr.tf.cx : vr.x + vr.w / 2, fy = vr.tf ? vr.tf.cy : vr.y + vr.h / 2;
+  const ox = vr.flip ? (cr - cl) / 2 : (cl - cr) / 2;
+  return { x: fx + ox * vr.w * s, y: fy + (ct - cb) / 2 * vr.h * s, w: vr.w * (1 - cl - cr) * s, h: vr.h * (1 - ct - cb) * s, rot: vr.tf?.r || 0, full: { x: fx, y: fy, w: vr.w * s, h: vr.h * s } };
+}
+
 // Curvas de aceleración del zoom (como en DaVinci: lineal, suave, acelera, frena…)
 export const ZOOM_CURVES = {
   suave: { name: 'Suave', f: ease.inOutCubic },
@@ -44,6 +78,7 @@ export class Compositor {
     this.gl = new ColorGL();
     this.base = mk(); this.bctx = this.base.getContext('2d');
     this.person = mk(); this.pctx = this.person.getContext('2d');
+    this.cut = mk(); this.cutCtx = this.cut.getContext('2d');
     this.tmp = mk();
     this.probe = mk(48, 85); this.probeCtx = this.probe.getContext('2d', { willReadFrequently: true });
     this.layoutMemo = new Map();
@@ -193,20 +228,41 @@ export class Compositor {
         }
         x = ax + (x - ax) * z; y = ay + (y - ay) * z; w *= z; h *= z;
         x += dx;
-        if (fit === 'contain') {
+        // Posición, escala, giro y recorte del clip (arrastrando en el reproductor)
+        const tf = clip.tf || null, crop = clip.crop || null;
+        vr = { x, y, w, h, sw, sh, flip: !!clip.flipX, crop, tf: tf ? { cx: x + w / 2 + (tf.x || 0) * W, cy: y + h / 2 + (tf.y || 0) * H, s: tf.s || 1, r: tf.r || 0 } : null };
+        const bgr = clip.bg?.remove ? clip.bg : null;
+        const moved = !!(tf || crop || bgr);
+        if (fit === 'contain' || (moved && (clip.bg?.fill || 'blur') === 'blur')) {
           const cs = Math.max(W / sw, H / sh) * 1.08;
           b.save(); b.filter = `blur(${(40 * u).toFixed(0)}px) brightness(0.55)`;
           b.drawImage(frame, (W - sw * cs) / 2, (H - sh * cs) / 2, sw * cs, sh * cs);
           b.restore();
-        }
+        } else if (moved && clip.bg?.fill && clip.bg.fill !== 'black') { b.fillStyle = clip.bg.fill; b.fillRect(0, 0, W, H); }
         if (blurPx > 0.5) b.filter = `blur(${blurPx.toFixed(1)}px)`;
-        if (clip.flipX) { b.save(); b.translate(x + w / 2, 0); b.scale(-1, 1); b.drawImage(frame, -w / 2, y, w, h); b.restore(); }
-        else b.drawImage(frame, x, y, w, h);
+        if (bgr) {
+          // Quitar el fondo: solo la persona (máscara de IA) sobre el relleno elegido
+          const m = personMask(el, `${asset.id}@${hit.src.toFixed(3)}`);
+          if (m) {
+            this.ensure(this.cut, W, H);
+            const cc = this.cutCtx;
+            cc.setTransform(1, 0, 0, 1, 0, 0); cc.globalCompositeOperation = 'source-over'; cc.filter = 'none';
+            cc.clearRect(0, 0, W, H);
+            drawPlaced(cc, frame, vr, sw, sh);
+            cc.globalCompositeOperation = 'destination-in';
+            cc.filter = `blur(${Math.max(1, 2 * u).toFixed(1)}px)`;
+            drawPlaced(cc, m, vr, m.width, m.height);
+            cc.filter = 'none'; cc.globalCompositeOperation = 'source-over';
+            b.drawImage(this.cut, 0, 0);
+          } else info.maskMissing = true;
+        } else drawPlaced(b, frame, vr, sw, sh);
         b.filter = 'none';
+        // Persona duplicada: la otra toma ocupa la otra mitad, con la unión difuminada
+        if (clip.dual && src.el2) this.drawDual(b, src, clip, vr, W, H, t, o, p);
         if (flash > 0) { b.fillStyle = `rgba(255,255,255,${(flash * 0.95).toFixed(3)})`; b.fillRect(0, 0, W, H); }
         if (dip > 0) { b.fillStyle = `rgba(0,0,0,${dip.toFixed(3)})`; b.fillRect(0, 0, W, H); }
-        vr = { x, y, w, h, sw, sh, flip: !!clip.flipX };
         info.vrect = vr;
+        info.clipId = clip.id;
       }
     }
 
@@ -253,8 +309,7 @@ export class Compositor {
       pc.drawImage(this.base, 0, 0);
       pc.globalCompositeOperation = 'destination-in';
       pc.filter = `blur(${Math.max(1, 2.5 * u).toFixed(1)}px)`;
-      if (vr.flip) { pc.save(); pc.translate(vr.x + vr.w / 2, 0); pc.scale(-1, 1); pc.drawImage(mask, -vr.w / 2, vr.y, vr.w, vr.h); pc.restore(); }
-      else pc.drawImage(mask, vr.x, vr.y, vr.w, vr.h);
+      drawPlaced(pc, mask, vr, mask.width, mask.height);
       pc.filter = 'none';
       pc.globalCompositeOperation = 'source-over';
       ctx.drawImage(this.person, 0, 0);
@@ -263,8 +318,35 @@ export class Compositor {
     frontOv.forEach(ov => this.drawOverlay(ctx, ov, t, env, info));
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1; ctx.filter = 'none';
-    info.maskMissing = (capBehind || behindOv.length > 0) && !mask;
+    info.maskMissing = !!info.maskMissing || ((capBehind || behindOv.length > 0) && !mask);
     return info;
+  }
+
+  drawDual(b, src, clip, vr, W, H, t, o, p) {
+    const d = clip.dual, el2 = src.el2;
+    const sw2 = el2.videoWidth || el2.width, sh2 = el2.videoHeight || el2.height;
+    if (!sw2 || !sh2) return;
+    let f2 = el2;
+    if (!o.compare) {
+      const v = colorValues(clip.color || p.color);
+      if (!isNeutral(v)) f2 = this.gl.render(el2, sw2, sh2, v, t, o.maxDim || this.maxDim) || el2;
+    }
+    this.ensure(this.cut, W, H);
+    const cc = this.cutCtx;
+    cc.setTransform(1, 0, 0, 1, 0, 0); cc.globalCompositeOperation = 'source-over';
+    cc.clearRect(0, 0, W, H);
+    cc.filter = d.gain ? `brightness(${(1 + d.gain).toFixed(3)})` : 'none';
+    drawPlaced(cc, f2, vr, sw2, sh2);
+    cc.filter = 'none';
+    // máscara: se ve solo el lado de esta toma, con un degradado (desenfoque) en la unión
+    const sx = vr.x + (d.split ?? 0.5) * vr.w, fw = Math.max(1, (d.feather ?? 0.03) * W);
+    const g = cc.createLinearGradient(sx - fw, 0, sx + fw, 0);
+    const right = !d.swap; // la toma secundaria va a la derecha salvo que se inviertan
+    g.addColorStop(0, `rgba(0,0,0,${right ? 0 : 1})`); g.addColorStop(1, `rgba(0,0,0,${right ? 1 : 0})`);
+    cc.globalCompositeOperation = 'destination-in';
+    cc.fillStyle = g; cc.fillRect(0, 0, W, H);
+    cc.globalCompositeOperation = 'source-over';
+    b.drawImage(this.cut, 0, 0);
   }
 
   placeCaption(ctx, g, st, env, src, vr, o) {

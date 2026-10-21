@@ -1,5 +1,6 @@
 import { Muxer, ArrayBufferTarget } from 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs';
 import { runtime } from '../core/store.js';
+import { clamp } from '../lib.js';
 import { clipDur, totalDuration, layoutClips } from '../core/timeline.js';
 
 let mbPromise = null;
@@ -11,6 +12,7 @@ import { captionGroups } from '../core/captions.js';
 import { Compositor } from '../render/compositor.js';
 import { preloadOverlayImages } from '../render/motions.js';
 import { normalizeForSocial } from './loudness.js';
+import { loadSegmenter } from '../ai/vision.js';
 
 const VIDEO_CODECS = ['avc1.640033', 'avc1.640028', 'avc1.4d0033', 'avc1.4d0028', 'avc1.42e033', 'avc1.42e028'];
 
@@ -42,47 +44,39 @@ export async function mixAudio(p, sr = 48000) {
   const dur = totalDuration(p);
   const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil((dur + 0.05) * sr)), sr);
   const decoded = new Map();
+  const used = new Set([...p.clips.map(c => c.assetId), ...p.clips.filter(c => c.dual).map(c => c.dual.assetId), ...(p.audio || []).map(a => a.assetId)]);
   for (const a of p.assets) {
-    if (a.kind === 'image') continue;
-    if (!p.clips.some(c => c.assetId === a.id)) continue;
+    if (a.kind === 'image' || !used.has(a.id)) continue;
     const rt = runtime.assets.get(a.id);
     if (!rt?.file) continue;
     try { decoded.set(a.id, await ctx.decodeAudioData(await rt.file.arrayBuffer())); } catch { /* sin audio */ }
   }
+  // coloca un trozo [s0, s1] de un audio en el instante t (con velocidad y fundidos cortos para evitar chasquidos)
+  const place = (buf, t, s0, s1, sp, vol) => {
+    if (!buf || vol <= 0.001 || s1 <= s0) return;
+    s0 = Math.max(0, s0);
+    const d = (s1 - s0) / sp;
+    const src = ctx.createBufferSource();
+    const g = ctx.createGain();
+    const f = Math.min(0.008, d / 4);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + f);
+    g.gain.setValueAtTime(vol, Math.max(t + f, t + d - f)); g.gain.linearRampToValueAtTime(0, t + d);
+    src.connect(g).connect(ctx.destination);
+    if (Math.abs(sp - 1) > 0.01) { src.buffer = timeStretch(ctx, buf, s0, s1, sp); src.start(t, 0, d); } // tono conservado
+    else { src.buffer = buf; src.start(t, s0, s1 - s0); }
+  };
   let t = 0;
   for (const c of p.clips) {
     const d = clipDur(c);
-    let buf = decoded.get(c.assetId);
     const vol = p.muted ? 0 : (c.volume ?? 1);
     const sp = c.speed || 1;
-    if (buf && vol > 0.001) {
-      const src = ctx.createBufferSource();
-      if (Math.abs(sp - 1) > 0.01) {
-        // velocidad distinta de 1: se estira el audio sin cambiar el tono de la voz
-        buf = timeStretch(ctx, buf, c.in, c.out, sp);
-        src.buffer = buf;
-        const g = ctx.createGain();
-        const f = Math.min(0.008, d / 4);
-        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + f);
-        g.gain.setValueAtTime(vol, Math.max(t + f, t + d - f)); g.gain.linearRampToValueAtTime(0, t + d);
-        src.connect(g).connect(ctx.destination);
-        src.start(t, 0, d);
-        t += d;
-        continue;
-      }
-      src.buffer = buf;
-      src.playbackRate.value = 1;
-      const g = ctx.createGain();
-      const f = Math.min(0.008, d / 4);
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(vol, t + f);
-      g.gain.setValueAtTime(vol, Math.max(t + f, t + d - f));
-      g.gain.linearRampToValueAtTime(0, t + d);
-      src.connect(g).connect(ctx.destination);
-      src.start(t, c.in, c.out - c.in);
-    }
+    const mode = c.dual?.audio || 'ab';
+    if (!c.dual || mode !== 'b') place(decoded.get(c.assetId), t, c.in, c.out, sp, vol);
+    if (c.dual && mode !== 'a') { const off = c.dual.off || 0; place(decoded.get(c.dual.assetId), t, c.in + off, c.out + off, sp, vol); }
     t += d;
   }
+  // pista de audio libre (micro externo, música…)
+  for (const a of p.audio || []) place(decoded.get(a.assetId), a.start, a.in, Math.min(a.out, a.in + Math.max(0, dur - a.start)), 1, p.audioMuted ? 0 : (a.volume ?? 1));
   return ctx.startRendering();
 }
 
@@ -165,6 +159,9 @@ export async function exportMP4(opts) {
     loud = normalizeForSocial(chs, 48000, opts.lufs ?? -14);
   }
   await preloadOverlayImages(p);
+  // la IA de segmentación tiene que estar cargada antes del primer fotograma (fondo quitado, texto detrás)
+  const needSeg = p.clips.some(c => c.bg?.remove) || p.captions.behind || p.overlays.some(o => o.behind) || Object.values(p.transcripts).some(tr => tr.words.some(w => w.gs?.behind));
+  if (needSeg) { onProgress?.(0.008, null, 'Cargando la IA de recorte…'); try { await loadSegmenter(); } catch (e) { console.warn(e); } }
   const vcfg = await pickVideoConfig(W, H, fps, bitrate);
   const acfg = await pickAudioConfig(48000);
 
@@ -252,17 +249,24 @@ export async function exportMP4(opts) {
     const times = [];
     for (let k = i; k < iEnd; k++) times.push(Math.min(l.clip.out - 0.001, l.clip.in + (k / fps - l.start) * sp, asset.duration - 0.001));
     const sink = await sinkFor(asset);
+    // persona duplicada: la otra toma se decodifica a la vez, con su desfase
+    const d = l.clip.dual;
+    const asset2 = d ? p.assets.find(a => a.id === d.assetId) : null;
+    const sink2 = asset2 ? await sinkFor(asset2) : null;
     if (sink) {
-      let last = null;
+      let last = null, last2 = null;
       const it = sink.canvasesAtTimestamps(times)[Symbol.asyncIterator]();
+      const it2 = sink2 ? sink2.canvasesAtTimestamps(times.map(s => clamp(s + (d.off || 0), 0, asset2.duration - 0.001)))[Symbol.asyncIterator]() : null;
       for (let j = 0; j < times.length; j++) {
         const r = await it.next();
         const wc = r.done ? null : r.value;
         if (wc?.canvas) last = wc.canvas;
+        if (it2) { const r2 = await it2.next(); if (!r2.done && r2.value?.canvas) last2 = r2.value.canvas; }
         const hit = { ...l, src: times[j] };
-        await encodeFrame((i) / fps, last ? { el: last, hit, asset } : null);
+        await encodeFrame((i) / fps, last ? { el: last, hit, asset, ...(last2 ? { el2: last2, asset2 } : {}) } : null);
       }
       try { await it.return?.(); } catch {}
+      try { await it2?.return?.(); } catch {}
     } else {
       // Respaldo: elemento <video> con búsqueda por fotograma (o imagen fija)
       const el = getEl(asset);

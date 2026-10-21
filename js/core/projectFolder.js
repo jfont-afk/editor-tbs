@@ -48,8 +48,28 @@ export async function saveNow() {
     dirty = false;
     set({ status: 'saved', savedAt: Date.now() });
     if (Date.now() - lastVersionAt > 5 * 60 * 1000) await saveVersion(true);
+    if (Date.now() - lastThumbAt > 60 * 1000) await savePortada();
   } catch (e) { console.warn(e); set({ status: 'error' }); }
 }
+
+// Portada pequeña para la pantalla de proyectos (fotograma actual del reproductor)
+let lastThumbAt = 0;
+export async function savePortada() {
+  if (!dir) return;
+  try {
+    const { player } = await import('../engine/player.js');
+    const src = player.canvas;
+    if (!src || !state.project.clips.length) return;
+    const w = 270, h = Math.round(w * src.height / src.width);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(src, 0, 0, w, h);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+    if (blob) { await writeFile(dir, 'portada.jpg', blob); lastThumbAt = Date.now(); }
+  } catch (e) { console.warn('portada', e); }
+}
+export const currentDir = () => dir;
+/** Usa una carpeta ya elegida como carpeta del proyecto abierto. */
+export async function attachFolder(handle) { await adopt(handle); lastThumbAt = 0; }
 const autosave = debounce(saveNow, 1500);
 onProjectChange(() => { if (dir) { dirty = true; set({ status: 'saving' }); autosave(); } });
 
@@ -125,6 +145,8 @@ async function attachMissing() {
 
 // ---------- Abrir / crear ----------
 async function adopt(handle) {
+  const { enableAutosave } = await import('./persist.js');
+  await enableAutosave();
   dir = handle;
   for (const s of SUBDIRS) await sub(s);
   await idbPut('lastFolder', handle);
@@ -152,6 +174,9 @@ export async function openFolder(handle) {
     if (!hasFolderAPI()) { toast('Tu navegador no permite carpetas de proyecto. Usa Google Chrome.', 'err'); return; }
     try { handle = await window.showDirectoryPicker({ id: 'tbs-proyectos', mode: 'readwrite', startIn: 'documents' }); } catch { return; }
   }
+  // al cambiar de proyecto, se guarda antes el que estaba abierto
+  if (dir && dirty) await saveNow();
+  if (dir) await savePortada();
   let txt;
   try { txt = await (await (await handle.getFileHandle(PROJECT_FILE)).getFile()).text(); }
   catch { toast('Esa carpeta no tiene ningún proyecto del Editor TBS', 'err'); return; }

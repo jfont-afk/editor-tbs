@@ -91,6 +91,9 @@ class Player {
       } else this.queueSeek(el, hit.src);
     } else this.dirty = true;
     this.prep = null;
+    this._auSync = 0;
+    if (!state.ui.playing) this.syncAudio(t);
+    this.syncSecond(t);
     emit();
   }
 
@@ -123,13 +126,46 @@ class Player {
     }
     this.clockBase = performance.now(); this.clockT = timeBus.t;
     this.prepareNext(hit);
+    this._auSync = 0;
     emit();
+  }
+
+  // ---- Pista de audio (y vídeo secundario del montaje de persona duplicada) ----
+  audioEl(clip) {
+    this.auEls = this.auEls || new Map();
+    let a = this.auEls.get(clip.id);
+    const rt = runtime.assets.get(clip.assetId);
+    if (!rt) return null;
+    if (!a || a._url !== rt.url) { a = new Audio(rt.url); a.preload = 'auto'; a._url = rt.url; this.auEls.set(clip.id, a); }
+    return a;
+  }
+  resyncAudio() { this._auSync = 0; }
+  syncAudio(t, force = false) {
+    const list = state.project.audio || [];
+    const playing = state.ui.playing;
+    const live = new Set();
+    for (const c of list) {
+      const a = this.audioEl(c);
+      if (!a) continue;
+      live.add(c.id);
+      const inside = t >= c.start && t < c.start + (c.out - c.in);
+      a.volume = clamp(c.volume ?? 1, 0, 1);
+      a.muted = this.muted || (c.volume ?? 1) <= 0.001 || !!state.project.audioMuted;
+      if (playing && inside) {
+        const want = c.in + (t - c.start);
+        if (force || Math.abs(a.currentTime - want) > 0.12) a.currentTime = want;
+        if (a.paused) a.play().catch(() => {});
+      } else if (!a.paused) a.pause();
+    }
+    for (const [id, a] of this.auEls || []) if (!live.has(id)) { a.pause(); this.auEls.delete(id); }
   }
 
   pause() {
     state.ui.playing = false;
     if (this.cur?.el && this.isVideo(this.cur.el)) this.cur.el.pause();
     if (this.prep?.el && this.isVideo(this.prep.el)) this.prep.el.pause();
+    for (const a of this.auEls?.values() || []) a.pause();
+    if (this.el2) this.el2.pause();
     state.ui.time = timeBus.t;
     this.dirty = true;
     emit();
@@ -139,8 +175,30 @@ class Player {
 
   applyAudio(el, clip) {
     el.volume = clamp(clip.volume ?? 1, 0, 1);
-    el.muted = this.muted || state.project.muted || (clip.volume ?? 1) <= 0.001;
+    el.muted = this.muted || state.project.muted || (clip.volume ?? 1) <= 0.001 || clip.dual?.audio === 'b';
     el.playbackRate = clip.speed || 1;
+  }
+
+  // Vídeo secundario (montaje de persona duplicada): la otra toma, sincronizada con la principal
+  syncSecond(t) {
+    const hit = clipAt(state.project, t);
+    const c = hit?.clip;
+    if (!c?.dual) { if (this.el2 && !this.el2.paused) this.el2.pause(); this.el2 = null; return; }
+    const v = this.els(c.dual.assetId);
+    const el = v && v[0];
+    if (!el) return;
+    if (this.el2 !== el) { this.el2?.pause?.(); this.el2 = el; el.onseeked = () => { this.dirty = true; }; }
+    const want = hit.src + (c.dual.off || 0);
+    el.volume = clamp(c.volume ?? 1, 0, 1);
+    el.muted = this.muted || state.project.muted || c.dual.audio === 'a';
+    el.playbackRate = c.speed || 1;
+    if (state.ui.playing) {
+      if (Math.abs(el.currentTime - want) > 0.1) el.currentTime = want;
+      if (el.paused) el.play().catch(() => {});
+    } else {
+      if (!el.paused) el.pause();
+      if (!el.seeking && Math.abs(el.currentTime - want) > 0.02) el.currentTime = want;
+    }
   }
 
   prepareNext(hit) {
@@ -188,6 +246,10 @@ class Player {
       }
       timeBus.set(t);
       this.dirty = true;
+      // audio externo: se comprueba la sincronía unas 6 veces por segundo
+      const now = performance.now();
+      if (now - (this._auSync || 0) > 160) { this.syncAudio(t, !this._auSync); this._auSync = now; }
+      this.syncSecond(t);
     }
     if (this.dirty && this.ctx) { this.dirty = false; this.draw(); }
   }
@@ -195,16 +257,17 @@ class Player {
   frameSource(t) {
     const p = state.project;
     const hit = clipAt(p, t);
+    const second = (h) => (h?.clip?.dual && this.el2 && this.el2.readyState >= 2 ? { el2: this.el2, asset2: p.assets.find(a => a.id === h.clip.dual.assetId) } : {});
     if (!hit || !this.cur || this.cur.clipId !== hit.clip.id) {
       if (!hit) return null;
       const el = this.cur?.el;
       if (!el) return null;
       const asset = p.assets.find(a => a.id === hit.clip.assetId);
       if (!runtime.assets.get(hit.clip.assetId)?.videos?.includes(el)) return null;
-      return { el, hit, asset };
+      return { el, hit, asset, ...second(hit) };
     }
     const asset = p.assets.find(a => a.id === hit.clip.assetId);
-    return { el: this.cur.el, hit, asset };
+    return { el: this.cur.el, hit, asset, ...second(hit) };
   }
 
   draw() {

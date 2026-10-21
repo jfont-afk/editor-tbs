@@ -10,7 +10,34 @@ import { Btn } from './controls.js';
 import * as A from '../core/actions.js';
 
 const HEAD = 104; // = ancho de .tl-head en css/app.css
-const H = { ruler: 26, ov: 26, cap: 34, video: 92 };
+const H = { ruler: 26, ov: 26, cap: 34, video: 92, audio: 46 };
+
+// Forma de onda de un audio de la pista de audio
+function AudioWave({ clip, w, pps }) {
+  const ref = useRef();
+  const rt = runtime.assets.get(clip.assetId);
+  const has = !!rt?.audio;
+  useEffect(() => {
+    const c = ref.current; if (!c) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.max(1, Math.min(8000, Math.round(w))), ch = H.audio - 10;
+    c.width = cw * dpr; c.height = ch * dpr;
+    const x = c.getContext('2d'); x.scale(dpr, dpr);
+    x.clearRect(0, 0, cw, ch);
+    const peaks = rt?.audio?.peaks;
+    if (!peaks) return;
+    const k = cw / w;
+    x.fillStyle = 'rgba(17,163,242,0.85)';
+    for (let px = 0; px < cw; px++) {
+      const s0 = clip.in + (px / k) / pps, s1 = clip.in + ((px + 1) / k) / pps;
+      const a = Math.floor(s0 * PEAKS_PER_SEC), b = Math.max(a + 1, Math.floor(s1 * PEAKS_PER_SEC));
+      let m = 0; for (let i = a; i < b; i++) if (peaks[i] > m) m = peaks[i];
+      const hh = Math.min(1, Math.pow(m, 0.7)) * ch * 0.9;
+      x.fillRect(px, (ch - hh) / 2, 1, Math.max(1, hh));
+    }
+  }, [w, pps, clip.in, clip.out, has]);
+  return html`<canvas ref=${ref}></canvas>`;
+}
 
 function Ruler({ width, pps, dur }) {
   const ref = useRef();
@@ -101,6 +128,7 @@ export function Timeline() {
   const groups = captionGroups(p, projectVersion);
   const L = lanes(p.overlays);
   const [drop, setDrop] = useState(null);
+  const [ghost, setGhost] = useState(null); // clip que se está arrastrando (sigue al ratón)
 
   // Cabezal sin re-render
   useEffect(() => timeBus.sub((t) => {
@@ -154,6 +182,7 @@ export function Timeline() {
         let idx = lay.findIndex(o => x < o.start + o.dur / 2);
         if (idx < 0) idx = lay.length;
         setDrop(idx);
+        setGhost({ id: l.clip.id, dx });
       }
     };
     const up = (ev) => {
@@ -167,7 +196,7 @@ export function Timeline() {
           if (idx > l.index) idx--;
           if (idx !== l.index) A.moveClip(l.clip.id, idx);
         } else player.seek((ev.clientX - scrollRef.current.getBoundingClientRect().left + scrollRef.current.scrollLeft - HEAD) / pps);
-        setDrop(null);
+        setDrop(null); setGhost(null);
       } else if (moved) player.seek(mode === 'l' ? l.start : Math.max(l.start, l.start + clipDur(state.project.clips.find(c => c.id === l.clip.id) || l.clip) - 0.04));
     };
     window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
@@ -185,6 +214,25 @@ export function Timeline() {
       if (mode === 'body') A.updateOverlay(o.id, { start: Math.max(0, snap(s0 + dt)) }, 'ovm' + o.id);
       else if (mode === 'l') { const ns = clamp(snap(s0 + dt), 0, s0 + d0 - 0.2); A.updateOverlay(o.id, { start: ns, dur: s0 + d0 - ns }, 'ovl' + o.id); }
       else A.updateOverlay(o.id, { dur: Math.max(0.2, snap(s0 + d0 + dt) - s0) }, 'ovr' + o.id);
+    };
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+  };
+
+  // Audio libre: mover (con imán) y recortar
+  const auDown = (e, a, mode) => {
+    e.stopPropagation();
+    if (e.button !== 0) return;
+    setUI({ sel: { type: 'audio', id: a.id } });
+    const sx = e.clientX, a0 = { start: a.start, in: a.in, out: a.out };
+    const snaps = [0, timeBus.t, ...lay.map(l => l.start), dur];
+    const snap = (v) => { for (const s of snaps) if (Math.abs(s - v) * pps < 7) return s; return v; };
+    const full = p.assets.find(x => x.id === a.assetId)?.duration || a.out;
+    const mv = (ev) => {
+      const dt = (ev.clientX - sx) / pps;
+      if (mode === 'body') A.updateAudio(a.id, { start: Math.max(0, snap(a0.start + dt)) }, 'aum' + a.id);
+      else if (mode === 'l') { const d = clamp(dt, -a0.in, a0.out - a0.in - 0.2); A.updateAudio(a.id, { in: a0.in + d, start: Math.max(0, a0.start + d) }, 'aul' + a.id); }
+      else A.updateAudio(a.id, { out: clamp(a0.out + dt, a0.in + 0.2, full) }, 'aur' + a.id);
     };
     const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); };
     window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
@@ -251,7 +299,9 @@ export function Timeline() {
             ${lay.map(l => {
               const a = p.assets.find(x => x.id === l.clip.assetId);
               const w = Math.max(6, l.dur * pps);
-              return html`<div key=${l.clip.id} class=${'tl-clip' + (sel?.id === l.clip.id ? ' sel' : '')} style=${`left:${l.start * pps}px;width:${w - 1}px`} onPointerDown=${e => clipDown(e, l, 'body')}>
+              const gh = ghost?.id === l.clip.id;
+              return html`<div key=${l.clip.id} class=${'tl-clip' + (sel?.id === l.clip.id ? ' sel' : '') + (gh ? ' dragging' : '')} style=${`left:${l.start * pps}px;width:${w - 1}px${gh ? `;transform:translateX(${ghost.dx}px)` : ''}`} onPointerDown=${e => clipDown(e, l, 'body')} title="Arrastra para mover el clip · bordes para recortar">
+                ${sel?.id === l.clip.id && w > 90 && html`<span class="tl-sel-tag">Seleccionado</span>`}
                 <${ClipCanvas} clip=${l.clip} asset=${a} w=${w - 1} pps=${pps} />
                 ${w > 60 && html`<span class="name">${a?.name || ''}${runtime.assets.get(l.clip.assetId)?.status === 'analyzing' ? ' · analizando…' : ''}</span>`}
                 ${l.clip.transition && l.clip.transition.type !== 'none' && html`<span class="trans" title="Transición"><${Icon} name="zap" /></span>`}
@@ -262,6 +312,24 @@ export function Timeline() {
             ${drop !== null && html`<div style=${`position:absolute;top:2px;bottom:2px;width:3px;border-radius:3px;background:var(--white);left:${(drop < lay.length ? lay[drop].start : dur) * pps - 1}px;z-index:5`}></div>`}
             ${(ui.silencePreview || []).map(r => html`<div class="tl-sil" style=${`left:${r.start * pps}px;width:${Math.max(2, (r.end - r.start) * pps)}px`}></div>`)}
             ${!p.clips.length && html`<div class="tl-empty" style="inset:0">Importa un vídeo para empezar</div>`}
+          </div>
+        </div>
+        <div class="tl-row" style=${`height:${H.audio}px`}>
+          <div class="tl-head"><${Icon} name="music" />Audio
+            <span class="hicons"><button class=${'hicon' + (p.audioMuted ? ' off' : '')} title=${p.audioMuted ? 'Activar la pista de audio' : 'Silenciar la pista de audio'} onClick=${() => update(pp => { pp.audioMuted = !pp.audioMuted; })}><${Icon} name=${p.audioMuted ? 'mute' : 'volume'} /></button></span></div>
+          <div class="tl-lane" style=${`width:${width}px`} onPointerDown=${scrub}
+            onDragOver=${e => e.preventDefault()} onDrop=${e => { e.preventDefault(); e.stopPropagation(); window.__dropFiles(e); }}>
+            ${(p.audio || []).map(a => {
+              const as = p.assets.find(x => x.id === a.assetId);
+              const w = Math.max(8, (a.out - a.in) * pps);
+              return html`<div key=${a.id} class=${'tl-au' + (sel?.id === a.id ? ' sel' : '')} style=${`left:${a.start * pps}px;width:${w - 1}px`} onPointerDown=${e => auDown(e, a, 'body')} title=${(as?.name || 'Audio') + ' · arrastra para mover'}>
+                <${AudioWave} clip=${a} w=${w - 1} pps=${pps} />
+                ${w > 70 && html`<span class="name">${as?.name || 'Audio'}</span>`}
+                <span class="tl-handle l" onPointerDown=${e => auDown(e, a, 'l')}></span>
+                <span class="tl-handle r" onPointerDown=${e => auDown(e, a, 'r')}></span>
+              </div>`;
+            })}
+            ${!(p.audio || []).length && html`<div class="tl-empty small" style="inset:0;font-size:11px">Suelta aquí un audio (micro externo, música, voz en off)</div>`}
           </div>
         </div>
         <div class="tl-playhead" ref=${phRef} style=${`left:${HEAD + timeBus.t * pps}px`}></div>

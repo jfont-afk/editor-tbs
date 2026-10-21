@@ -1,10 +1,10 @@
-import { html, fmtDur, fmtTime, clamp } from '../lib.js';
+import { html, fmtDur, fmtTime, clamp, useState } from '../lib.js';
 import { state, update, setUI, projectVersion } from '../core/store.js';
 import { Btn, Section, Slider, Toggle, Seg, Select, TextInput, NumberInput, Swatches } from './controls.js';
 import { Icon, TbsIcon } from './icons.js';
 import { TBS_ICON_OPTIONS } from '../data/tbsIcons.js';
 import * as A from '../core/actions.js';
-import { MOTIONS } from '../render/motions.js';
+import { MOTIONS, SP500, parseNum, parseSeries, seriesPoints } from '../render/motions.js';
 import { TRANSITIONS, ZOOM_CURVES } from '../render/compositor.js';
 import { CAPTION_TEMPLATES, ANIMS, REVEALS } from '../data/captionTemplates.js';
 import { captionGroups } from '../core/captions.js';
@@ -49,6 +49,47 @@ function ClipInspector({ c }) {
           <div class="dim small">La voz conserva su tono al exportar.</div>
         </div>
       </${Section}>
+      ${c.dual && html`<${Section} title="Persona duplicada">
+        <div class="stack">
+          <div class="dim small">${a?.name} a la izquierda · ${A.assetById(c.dual.assetId)?.name} a la derecha.</div>
+          <${Slider} label="Posición de la unión" value=${c.dual.split ?? 0.5} min=${0.15} max=${0.85} step=${0.005} format=${v => Math.round(v * 100) + '%'} onInput=${v => A.updateDual(c.id, { split: v }, 'dsp' + c.id)} />
+          <${Slider} label="Difuminado de la unión" value=${c.dual.feather ?? 0.035} min=${0.002} max=${0.15} step=${0.002} format=${v => Math.round(v * 1000) / 10 + '%'} onInput=${v => A.updateDual(c.id, { feather: v }, 'dfe' + c.id)} />
+          <${Slider} label="Igualar la luz de la derecha" value=${c.dual.gain || 0} min=${-0.3} max=${0.3} step=${0.01} center format=${v => (v > 0 ? '+' : '') + Math.round(v * 100)} onInput=${v => A.updateDual(c.id, { gain: v }, 'dga' + c.id)} />
+          <div class="field"><span class="field-label">Desfase de la toma derecha · ${(c.dual.off || 0).toFixed(2).replace('.', ',')} s</span>
+            <div class="grid2">
+              <${Btn} cls="sm" onClick=${() => A.updateDual(c.id, d => ({ off: (d.off || 0) - 0.1 }))}>− 0,1 s</${Btn}>
+              <${Btn} cls="sm" onClick=${() => A.updateDual(c.id, d => ({ off: (d.off || 0) + 0.1 }))}>+ 0,1 s</${Btn}>
+            </div></div>
+          <div class="field"><span class="field-label">Sonido</span>
+            <${Seg} small value=${c.dual.audio || 'ab'} onChange=${v => A.updateDual(c.id, { audio: v })} options=${[['ab', 'Las dos'], ['a', 'Solo izquierda'], ['b', 'Solo derecha']]} /></div>
+          <${Btn} cls="sm ghost" onClick=${() => A.updateClip(c.id, { dual: null })}>Quitar la persona duplicada de este clip</${Btn}>
+        </div>
+      </${Section}>`}
+      <${Section} title="Posición, tamaño y recorte">
+        <div class="stack">
+          <div class="dim small">También puedes hacerlo en el reproductor: clic en el vídeo para seleccionarlo (marco rojo) y arrástralo; esquinas = tamaño, círculo = giro, "Recortar" = bordes.</div>
+          <div class="grid2">
+            <${Slider} label="Horizontal" value=${c.tf?.x || 0} min=${-1} max=${1} step=${0.005} center format=${v => Math.round(v * 100)} onInput=${v => A.updateClip(c.id, cc => ({ tf: { x: 0, y: 0, s: 1, r: 0, ...(cc.tf || {}), x: v } }), 'tfx' + c.id)} />
+            <${Slider} label="Vertical" value=${c.tf?.y || 0} min=${-1} max=${1} step=${0.005} center format=${v => Math.round(v * 100)} onInput=${v => A.updateClip(c.id, cc => ({ tf: { x: 0, y: 0, s: 1, r: 0, ...(cc.tf || {}), y: v } }), 'tfy' + c.id)} />
+          </div>
+          <div class="grid2">
+            <${Slider} label="Tamaño" value=${c.tf?.s || 1} min=${0.1} max=${4} step=${0.01} format=${v => Math.round(v * 100) + '%'} onInput=${v => A.updateClip(c.id, cc => ({ tf: { x: 0, y: 0, s: 1, r: 0, ...(cc.tf || {}), s: v } }), 'tfs' + c.id)} />
+            <${Slider} label="Giro" value=${c.tf?.r || 0} min=${-Math.PI} max=${Math.PI} step=${0.01} center format=${v => Math.round(v * 180 / Math.PI) + '°'} onInput=${v => A.updateClip(c.id, cc => ({ tf: { x: 0, y: 0, s: 1, r: 0, ...(cc.tf || {}), r: v } }), 'tfr' + c.id)} />
+          </div>
+          <div class="grid2">
+            ${[['l', 'Recorte izq.'], ['r', 'Recorte der.'], ['t', 'Recorte arriba'], ['b', 'Recorte abajo']].map(([k, lb]) => html`<${Slider} label=${lb} value=${c.crop?.[k] || 0} min=${0} max=${0.9} step=${0.005} format=${v => Math.round(v * 100) + '%'} onInput=${v => A.updateClip(c.id, cc => ({ crop: { l: 0, r: 0, t: 0, b: 0, ...(cc.crop || {}), [k]: v } }), 'crop' + k + c.id)} />`)}
+          </div>
+          ${(c.tf || c.crop) && html`<${Btn} cls="sm ghost" icon="reset" onClick=${() => A.updateClip(c.id, { tf: null, crop: null })}>Restablecer posición y recorte</${Btn}>`}
+        </div>
+      </${Section}>
+      <${Section} title="Fondo">
+        <div class="stack">
+          <${Toggle} label="Quitar el fondo" sub="La IA deja solo a la persona" value=${!!c.bg?.remove} onChange=${v => A.updateClip(c.id, { bg: { fill: 'blur', ...(c.bg || {}), remove: v } })} />
+          <div class="field"><span class="field-label">Relleno detrás (al quitar el fondo, mover o recortar)</span>
+            <${Seg} small value=${['blur', 'black'].includes(c.bg?.fill || 'blur') ? (c.bg?.fill || 'blur') : 'color'} onChange=${v => A.updateClip(c.id, { bg: { ...(c.bg || {}), fill: v === 'color' ? '#daff0a' : v } })} options=${[['blur', 'Desenfocado'], ['black', 'Negro'], ['color', 'Color']]} /></div>
+          ${c.bg?.fill && !['blur', 'black'].includes(c.bg.fill) && html`<${Swatches} value=${c.bg.fill} onChange=${v => A.updateClip(c.id, { bg: { ...(c.bg || {}), fill: v } })} />`}
+        </div>
+      </${Section}>
       <${Section} title="Encuadre">
         <div class="stack">
           <${Toggle} label="Espejo" sub="Voltear en horizontal" value=${!!c.flipX} onChange=${v => A.updateClip(c.id, { flipX: v })} />
@@ -72,10 +113,49 @@ function CurveIcon({ f }) {
   return html`<svg viewBox="0 0 36 34" width="36" height="34"><polyline points=${pts} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
 }
 
+// Tabla de hasta 24 puntos (etiqueta + cifra) con pegado inteligente
+function SeriesField({ f, o }) {
+  const pts = Array.from({ length: 24 }, (_, i) => o.props.points?.[i] || { l: '', v: '' });
+  const [paste, setPaste] = useState(null);
+  const [y0, setY0] = useState('');
+  const set = (arr) => A.updateOverlay(o.id, { props: { points: arr } }, 'pts' + o.id);
+  const valid = seriesPoints(pts);
+  const vs = valid.map(p => p.v);
+  const lo = Math.min(...vs), hi = Math.max(...vs);
+  const pct = (v) => (vs.length > 1 && hi > lo ? Math.round(1 + 99 * (v - lo) / (hi - lo)) : 50);
+  return html`<div class="field"><span class="field-label">${f.label}</span>
+    <div class="dim small" style="margin-bottom:6px">Rellena hasta 24 filas. Las que dejes sin cifra no salen. Cada cifra se pasa a una escala de 1 a 100 para dibujarla (lo ves a la derecha).</div>
+    <div class="row wrap" style="gap:4px;margin-bottom:6px">
+      <${Btn} cls="sm" icon="copy" onClick=${() => setPaste(paste === null ? '' : null)}>Pegar datos</${Btn}>
+      <${Btn} cls="sm ghost" onClick=${() => set(SP500.map(([l, v]) => ({ l, v })))}>Ejemplo: S&P 500</${Btn}>
+      <${Btn} cls="sm ghost" onClick=${() => set([])}>Vaciar</${Btn}>
+    </div>
+    ${paste !== null && html`<div class="stack" style="margin-bottom:8px">
+      <textarea class="textarea" rows="5" placeholder=${'Pega desde Excel o escribe una por línea:\n2001  1.148,08\n2002: 879,82\no solo cifras: 1148; 879; 1111'} value=${paste} onInput=${e => setPaste(e.target.value)}></textarea>
+      <div class="row" style="gap:6px"><input class="input" style="width:110px" placeholder="Año inicial" value=${y0} onInput=${e => setY0(e.target.value)} />
+        <${Btn} cls="sm primary" onClick=${() => { const rows = parseSeries(paste, y0); if (rows.length) { set(rows); setPaste(null); } }}>Usar estos datos</${Btn}></div>
+      <span class="dim small">Entiende "1.148,08", "5,881.63", "1,2 mil", "3M", "12%"… Si solo hay cifras y pones el año inicial, numera los años solos.</span>
+    </div>`}
+    <div class="series-grid">
+      <span class="sg-h">#</span><span class="sg-h">Etiqueta</span><span class="sg-h">Cifra</span><span class="sg-h">1–100</span>
+      ${pts.map((p, i) => {
+        const v = parseNum(p.v);
+        const upd = (k, val) => { const arr = pts.map(x => ({ ...x })); arr[i] = { ...arr[i], [k]: val }; while (arr.length && !arr[arr.length - 1].l && !arr[arr.length - 1].v) arr.pop(); set(arr); };
+        return html`<span class="sg-i">${i + 1}</span>
+          <input class="input sg" value=${p.l} placeholder="—" onInput=${e => upd('l', e.target.value)} />
+          <input class=${'input sg' + (p.v && v === null ? ' bad' : '')} value=${p.v} placeholder="vacío" onInput=${e => upd('v', e.target.value)} />
+          <span class="sg-p">${v === null ? '' : pct(v)}</span>`;
+      })}
+    </div>
+    <div class="dim small" style="margin-top:6px">${valid.length} punto${valid.length === 1 ? '' : 's'} con datos.</div>
+  </div>`;
+}
+
 function Field({ f, o }) {
   const v = o.props[f.k];
   const set = (val) => A.updateOverlay(o.id, { props: { [f.k]: val } }, 'p' + o.id + f.k);
   if (f.hide && f.hide(o.props)) return null;
+  if (f.type === 'series') return html`<${SeriesField} f=${f} o=${o} />`;
   if (f.type === 'curve') return html`<div class="field"><span class="field-label">${f.label}</span>
     <div class="curve-grid">${Object.entries(ZOOM_CURVES).map(([k, c]) => html`<button class=${'curve-cell' + ((v || 'suave') === k ? ' on' : '')} title=${c.name} onClick=${() => set(k)}><${CurveIcon} f=${c.f} /><span>${c.name}</span></button>`)}</div></div>`;
   if (f.type === 'text') return html`<${TextInput} label=${f.label} value=${v ?? ''} onInput=${set} />`;
@@ -196,8 +276,43 @@ function Help() {
     </div>`;
 }
 
+// Audio de la pista de audio (micro externo, música)
+function AudioInspector({ a }) {
+  const p = state.project;
+  const as = p.assets.find(x => x.id === a.assetId);
+  const [res, setRes] = useState(null);
+  return html`
+    <div class="insp-head"><h3 class="insp-title">Audio</h3>
+      <${Btn} cls="icon sm ghost danger" icon="trash" title="Quitar de la pista (Supr)" onClick=${A.deleteSelection} /></div>
+    <div class="insp-body">
+      <div class="dim small" style="margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${as?.name} · empieza en ${fmtTime(a.start, true)} · dura ${fmtDur(a.out - a.in)}</div>
+      <${Section} title="Sincronizar con el vídeo">
+        <div class="stack">
+          <div class="dim small">Si es el mismo sonido que graba la cámara (por ejemplo, el micro de solapa), compara las dos formas de onda y lo coloca exactamente en su sitio.</div>
+          <${Btn} cls="primary block" icon="sync" onClick=${async () => setRes(await A.syncAudioClip(a.id))}>Sincronizar automáticamente</${Btn}>
+          ${res && html`<div class="note small">Desfase: <b>${res.lag >= 0 ? '+' : ''}${res.lag.toFixed(2).replace('.', ',')} s</b> · coincidencia ${res.conf > 0.5 ? 'alta' : res.conf > 0.25 ? 'media' : 'baja'}</div>`}
+          <${Toggle} label="Usar solo este audio" sub="Silencia el sonido de la cámara (queda solo el del micro)" value=${!!p.muted} onChange=${v => update(pp => { pp.muted = v; })} />
+          <div class="grid2">
+            <${Btn} cls="sm" onClick=${() => A.updateAudio(a.id, c => ({ start: Math.max(0, c.start - 1 / 30) }), 'aunudge')}>− 1 fotograma</${Btn}>
+            <${Btn} cls="sm" onClick=${() => A.updateAudio(a.id, c => ({ start: c.start + 1 / 30 }), 'aunudge')}>+ 1 fotograma</${Btn}>
+          </div>
+        </div>
+      </${Section}>
+      <${Section} title="Volumen">
+        <${Slider} label="Volumen" value=${a.volume ?? 1} min=${0} max=${1.5} step=${0.01} format=${v => Math.round(v * 100) + '%'} onInput=${v => A.updateAudio(a.id, { volume: v }, 'auv' + a.id)} />
+      </${Section}>
+      <${Section} title="Tiempo">
+        <div class="grid2">
+          <${Btn} cls="sm" onClick=${() => A.updateAudio(a.id, { start: timeBus.t })}>Empezar en el cursor</${Btn}>
+          <${Btn} cls="sm" onClick=${() => A.updateAudio(a.id, { start: 0 })}>Al principio</${Btn}>
+        </div>
+      </${Section}>
+    </div>`;
+}
+
 export function Inspector() {
   const p = state.project, sel = state.ui.sel;
+  if (sel?.type === 'audio') { const a = (p.audio || []).find(x => x.id === sel.id); if (a) return html`<${AudioInspector} a=${a} key=${a.id} />`; }
   if (sel?.type === 'clip') { const c = p.clips.find(x => x.id === sel.id); if (c) return html`<${ClipInspector} c=${c} />`; }
   if (sel?.type === 'overlay') { const o = p.overlays.find(x => x.id === sel.id); if (o) return html`<${OverlayInspector} o=${o} />`; }
   if (sel?.type === 'group' || (state.ui.tab === 'captions' && Object.keys(p.transcripts).length)) return html`<${CaptionStyleEditor} key=${sel?.id || 'all'} />`;

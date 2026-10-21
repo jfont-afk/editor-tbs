@@ -96,6 +96,63 @@ export async function preloadOverlayImages(p) {
   })));
 }
 
+// ---------- Series de datos (gráfico de evolución) ----------
+// Ejemplo: S&P 500, cierre de cada año (puntos del índice).
+export const SP500 = [['2001', '1148,08'], ['2002', '879,82'], ['2003', '1111,92'], ['2004', '1211,92'], ['2005', '1248,29'], ['2006', '1418,30'], ['2007', '1468,36'], ['2008', '903,25'], ['2009', '1115,10'], ['2010', '1257,64'], ['2011', '1257,60'], ['2012', '1426,19'], ['2013', '1848,36'], ['2014', '2058,90'], ['2015', '2043,94'], ['2016', '2238,83'], ['2017', '2673,61'], ['2018', '2506,85'], ['2019', '3230,78'], ['2020', '3756,07'], ['2021', '4766,18'], ['2022', '3839,50'], ['2023', '4769,83'], ['2024', '5881,63']];
+
+/**
+ * Lee una cifra escrita de cualquier forma: "5.881,63", "5,881.63", "1,2 mil", "3M", "12%", "-4,5"…
+ * Devuelve null si está vacía o no es un número.
+ */
+export function parseNum(raw) {
+  let s = String(raw ?? '').trim().toLowerCase().replace(/\s+/g, '').replace(/[€$£%+]|pts?|puntos/g, '');
+  if (!s) return null;
+  let mult = 1;
+  const m = s.match(/(mil|k|m|mm|bn|b|millones|mill)$/);
+  if (m) { s = s.slice(0, -m[1].length); mult = { mil: 1e3, k: 1e3, m: 1e6, mill: 1e6, millones: 1e6, mm: 1e6, b: 1e9, bn: 1e9 }[m[1]]; }
+  const hasDot = s.includes('.'), hasComma = s.includes(',');
+  if (hasDot && hasComma) s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  else if (hasComma) s = s.match(/,/g).length > 1 ? s.replace(/,/g, '') : s.replace(',', '.'); // en español la coma es decimal
+  else if (hasDot && /^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); // 1.148 = mil ciento cuarenta y ocho
+  const v = parseFloat(s);
+  return isFinite(v) ? v * mult : null;
+}
+export function fmtNum(v, dec = null) {
+  const a = Math.abs(v);
+  const d = dec ?? (a >= 1000 ? 0 : a >= 100 ? 1 : 2);
+  return v.toLocaleString('es-ES', { maximumFractionDigits: d, minimumFractionDigits: 0 });
+}
+// Puntos válidos (los vacíos desaparecen)
+export function seriesPoints(points) {
+  return (points || []).map(p => ({ l: String(p?.l ?? '').trim(), v: parseNum(p?.v) })).filter(p => p.v !== null).slice(0, 24);
+}
+/**
+ * Convierte texto pegado (Excel, Sheets, una lista…) en puntos: "2001 1148,08", "2001: 1.148", "2001;1148",
+ * o solo cifras (una por línea o separadas por punto y coma). Si solo hay cifras y se indica un año inicial, se numeran.
+ */
+export function parseSeries(txt, startLabel = '') {
+  const lines = String(txt).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let rows = [];
+  for (const line of lines) {
+    const parts = line.split(/\t|;|\s*:\s*|\s{2,}|\s(?=[-+€$]?\d)/).map(x => x.trim()).filter(Boolean);
+    const allNum = parts.every(x => parseNum(x) !== null);
+    const yearFirst = /^(19|20)\d{2}$/.test(parts[0] || '');
+    // "1148; 879; 1111" → solo cifras (salvo que la primera sea un año: "2001 1148")
+    if (parts.length > 2 && allNum && !yearFirst) { for (const tok of parts) rows.push({ l: '', v: tok }); continue; }
+    if (parts.length >= 2) {
+      const v = parseNum(parts[parts.length - 1]);
+      if (v !== null) { rows.push({ l: parts.slice(0, -1).join(' '), v: parts[parts.length - 1] }); continue; }
+    }
+    // una línea con varias cifras separadas por punto y coma
+    for (const tok of line.split(/;|\t/)) if (parseNum(tok) !== null) rows.push({ l: '', v: tok.trim() });
+  }
+  const y0 = parseInt(startLabel, 10);
+  if (isFinite(y0)) rows = rows.map((r, i) => (r.l ? r : { ...r, l: String(y0 + i) }));
+  return rows.slice(0, 24);
+}
+const inkOf = (hex) => (luma(hex) > 0.55 ? C.n900 : C.white);
+function luma(hex) { const h = String(hex).replace('#', ''); if (h.length < 6) return 1; const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; }
+
 // Generador pseudoaleatorio estable por motion
 function rng(seed) { let s = 0; for (const ch of String(seed)) s = (s * 31 + ch.charCodeAt(0)) >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 
@@ -578,6 +635,105 @@ export const MOTIONS = {
       ctx.shadowColor = col; ctx.shadowBlur = 20 * u; ctx.stroke();
       ctx.beginPath(); ctx.arc(X(n - 1), Y(pts[n - 1]), 10 * u, 0, Math.PI * 2); ctx.fillStyle = C.white; ctx.fill();
       ctx.restore();
+      return { w, h };
+    },
+  },
+  evolucion: {
+    // Hasta 24 puntos. Los que se dejan vacíos no se dibujan. Los valores se pasan a una escala de 1 a 100.
+    name: 'Gráfico de evolución', cat: 'dato', icon: 'chartLine', dur: 6, y: 0.45, animIn: 'pop', animOut: 'fade',
+    props: { title: 'S&P 500', subtitle: 'Cierre anual', prefix: '', suffix: '', color: 'fluor', style: 'line', values: 'ends', change: true, points: SP500.map(([l, v]) => ({ l, v })) },
+    fields: [
+      { k: 'title', label: 'Título', type: 'text' }, { k: 'subtitle', label: 'Subtítulo', type: 'text' },
+      { k: 'points', label: 'Datos (hasta 24 puntos)', type: 'series' },
+      { k: 'prefix', label: 'Antes del número (€, $…)', type: 'text' }, { k: 'suffix', label: 'Después del número (%, pts…)', type: 'text' },
+      { k: 'style', label: 'Tipo', type: 'select', options: [['line', 'Línea'], ['area', 'Línea con área'], ['bars', 'Barras']] },
+      { k: 'values', label: 'Cifras visibles', type: 'select', options: [['ends', 'Inicio, final y máximo'], ['all', 'Todas'], ['none', 'Ninguna']] },
+      { k: 'change', label: 'Mostrar el % de cambio', type: 'toggle' },
+      { k: 'color', label: 'Color', type: 'color' },
+    ],
+    draw(ctx, o, lt, env) {
+      const { u } = env; const P = o.props;
+      const pts = seriesPoints(P.points);
+      const w = 880 * u, h = 640 * u;
+      glass(ctx, -w / 2, -h / 2, w, h, 30 * u, u, env, 'rgba(18,18,20,0.6)');
+      const col = hexOf(P.color || 'fluor');
+      const pad = 46 * u;
+      text(ctx, P.title || '', -w / 2 + pad, -h / 2 + 58 * u, font(700, 44 * u, F.head), C.white, 'left', -1 * u);
+      if (P.subtitle) text(ctx, P.subtitle, -w / 2 + pad, -h / 2 + 104 * u, font(500, 26 * u, F.body), 'rgba(255,255,255,0.6)', 'left');
+      if (pts.length < 2) { text(ctx, 'Añade al menos 2 datos', 0, 30 * u, font(600, 30 * u, F.body), 'rgba(255,255,255,0.6)'); return { w, h }; }
+      const fmt = (v) => (P.prefix || '') + fmtNum(v) + (P.suffix || '');
+      // cambio total
+      const first = pts[0].v, last = pts[pts.length - 1].v;
+      if (P.change !== false && first !== 0) {
+        const ch = (last - first) / Math.abs(first) * 100;
+        const s = (ch >= 0 ? '+' : '') + fmtNum(ch, 0) + '%';
+        const f = font(700, 36 * u, F.head);
+        const bw = measure(ctx, s, f) + 40 * u, bh = 60 * u;
+        const kk = ease.outBack(clamp((lt - 1.6) / 0.5, 0, 1), 1.6);
+        if (kk > 0) {
+          ctx.save(); ctx.translate(w / 2 - pad - bw / 2, -h / 2 + 70 * u); ctx.scale(kk, kk);
+          rrect(ctx, -bw / 2, -bh / 2, bw, bh, bh / 2); ctx.fillStyle = ch >= 0 ? col : C.red; ctx.fill();
+          text(ctx, s, 0, 2 * u, f, ch >= 0 ? inkOf(col) : C.white);
+          ctx.restore();
+        }
+      }
+      // escala 1–100 con margen (los valores se normalizan para que el gráfico ocupe bien su espacio)
+      const vs = pts.map(p => p.v);
+      let lo = Math.min(...vs), hi = Math.max(...vs);
+      if (P.style === 'bars') lo = Math.min(0, lo);
+      if (hi === lo) { hi += 1; lo -= 1; }
+      const norm = (v) => 1 + 99 * (v - lo) / (hi - lo);
+      const gx = -w / 2 + pad, gy = -h / 2 + 150 * u, gw = w - pad * 2, gh = h - 240 * u;
+      const X = (i) => gx + (pts.length === 1 ? gw / 2 : gw * i / (pts.length - 1));
+      const Y = (v) => gy + gh * (1 - (norm(v) - 1) / 99) * 0.9 + gh * 0.05;
+      ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 2 * u;
+      for (let i = 0; i <= 4; i++) { ctx.beginPath(); ctx.moveTo(gx, gy + gh * i / 4); ctx.lineTo(gx + gw, gy + gh * i / 4); ctx.stroke(); }
+      ctx.restore();
+      // etiquetas del eje (como mucho 6)
+      const every = Math.max(1, Math.ceil(pts.length / 6));
+      pts.forEach((p, i) => { if (p.l && (i % every === 0 || i === pts.length - 1)) text(ctx, p.l, X(i), gy + gh + 34 * u, font(600, 22 * u, F.mono), 'rgba(255,255,255,0.55)'); });
+      const k = clamp((lt - 0.3) / 2.2, 0, 1), ke = ease.inOutCubic(k);
+      const reach = ke * (pts.length - 1); // hasta qué punto se ha dibujado
+      const n = Math.floor(reach);
+      if (P.style === 'bars') {
+        const bw = Math.min(64 * u, gw / pts.length * 0.62);
+        pts.forEach((p, i) => {
+          const g = clamp((reach - i + 1), 0, 1);
+          if (g <= 0) return;
+          const y0 = Y(Math.max(lo, 0)), y1 = Y(p.v);
+          const hh = (y0 - y1) * ease.outCubic(g);
+          rrect(ctx, X(i) - bw / 2, y0 - hh, bw, hh, Math.min(10 * u, bw / 3));
+          ctx.fillStyle = i === pts.length - 1 ? col : withAlpha(col, 0.55); ctx.fill();
+        });
+      } else {
+        const path = () => {
+          ctx.beginPath(); ctx.moveTo(X(0), Y(pts[0].v));
+          for (let i = 1; i <= n; i++) ctx.lineTo(X(i), Y(pts[i].v));
+          if (n < pts.length - 1) { const f = reach - n; ctx.lineTo(X(n) + (X(n + 1) - X(n)) * f, Y(pts[n].v) + (Y(pts[n + 1].v) - Y(pts[n].v)) * f); }
+        };
+        const hx = n < pts.length - 1 ? X(n) + (X(n + 1) - X(n)) * (reach - n) : X(n);
+        if (P.style === 'area') {
+          ctx.save(); path(); ctx.lineTo(hx, gy + gh); ctx.lineTo(X(0), gy + gh); ctx.closePath();
+          const grad = ctx.createLinearGradient(0, gy, 0, gy + gh); grad.addColorStop(0, withAlpha(col, 0.35)); grad.addColorStop(1, withAlpha(col, 0));
+          ctx.fillStyle = grad; ctx.fill(); ctx.restore();
+        }
+        ctx.save(); path(); ctx.strokeStyle = col; ctx.lineWidth = 6 * u; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.shadowColor = withAlpha(col, 0.6); ctx.shadowBlur = 18 * u; ctx.stroke(); ctx.restore();
+        // puntos
+        for (let i = 0; i <= n; i++) { ctx.beginPath(); ctx.arc(X(i), Y(pts[i].v), (i === n ? 10 : 6) * u, 0, Math.PI * 2); ctx.fillStyle = i === n ? C.white : col; ctx.fill(); }
+      }
+      // cifras
+      const imax = vs.indexOf(Math.max(...vs));
+      const show = (i) => P.values === 'all' || (P.values !== 'none' && (i === 0 || i === pts.length - 1 || i === imax));
+      pts.forEach((p, i) => {
+        if (!show(i) || i > reach + 0.01) return;
+        const big = i === pts.length - 1;
+        const f = font(700, (big ? 34 : 24) * u, F.head);
+        const yy = Y(p.v) - (big ? 30 : 22) * u;
+        const xx = clamp(X(i), gx + 50 * u, gx + gw - 50 * u);
+        ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 10 * u;
+        text(ctx, fmt(p.v), xx, yy, f, big ? col : C.white); ctx.restore();
+      });
       return { w, h };
     },
   },

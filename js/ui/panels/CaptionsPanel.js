@@ -34,14 +34,15 @@ export function templatePreview(tpl) {
   x.beginPath(); x.ellipse(W / 2, H * 0.36, W * 0.15, H * 0.13, 0, 0, Math.PI * 2); x.fill();
   x.beginPath(); x.ellipse(W / 2, H * 0.9, W * 0.36, H * 0.32, 0, 0, Math.PI * 2); x.fill();
   x.restore();
-  const n = Math.min(5, tpl.words);
-  const words = SAMPLES[n].map(([text, hl], i) => ({ w: { id: 'p' + i, text, hl }, ts: i * 0.3, te: i * 0.3 + 0.3 }));
+  // ejemplo con los tres niveles: normal, destacada y muy destacada (título)
+  const sample = tpl.heroMode === 'solo' ? [['invierte', 0], ['con', 0], ['cabeza', 1]] : [['así', 0], ['es', 0], ['como', 0], ['invertimos', 1], ['TBS', 2]];
+  const words = sample.map(([text, hl], i) => ({ w: { id: 'p' + i, text, hl }, ts: i * 0.3, te: i * 0.3 + 0.3 }));
   const grp = { id: 'p0', items: words, start: 0, end: 10 };
   const st = resolveStyle({ template: tpl.id, size: 1, upper: 'auto', posY: tpl.posY }, null);
   st.posY = 0.55;
   const env = { W, H, u: Math.min(W, H) / 1080 * 1.9, safe: { x: W * 0.06, y: H * 0.06, w: W * 0.88, h: H * 0.88 } };
   const L = layoutCaption(x, grp, st, env);
-  drawCaption(x, grp, words[words.length - 1].ts + 0.2, st, L, env, { backdrop: c });
+  drawCaption(x, grp, words[words.length - 1].ts + 1.2, st, L, env, { backdrop: c });
   const url = c.toDataURL('image/jpeg', 0.85);
   previewCache.set(tpl.id, url);
   return url;
@@ -116,7 +117,7 @@ function WordChip({ it }) {
   if (edit) return html`<input class="gword-edit" autofocus value=${w.text}
     onKeyDown=${e => { if (e.key === 'Enter') { A.editWordText(w.id, e.target.value.trim() || w.text); setEdit(false); } if (e.key === 'Escape') setEdit(false); }}
     onBlur=${e => { A.editWordText(w.id, e.target.value.trim() || w.text); setEdit(false); }} />`;
-  return html`<button class=${'gword' + (w.hl ? ' hl' + w.hl : '') + (w.nl ? ' nl' : '')} title="Clic: destacar · Doble clic: editar · Arrastra al bloque de al lado para moverla" draggable="true"
+  return html`<button class=${'gword' + (w.hl ? ' hl' + w.hl : '') + (w.nl ? ' nl' : '')} title=${['Normal', 'Destacada', 'Muy destacada (título)'][w.hl | 0] + ' · clic: cambiar · doble clic: editar · arrastra al bloque de al lado para moverla'} draggable="true"
     onDragStart=${e => { e.dataTransfer.setData('text/x-tbs-word', w.id); e.dataTransfer.effectAllowed = 'move'; }}
     onClick=${e => { e.stopPropagation(); A.cycleHighlight(w.id); }} onDblClick=${e => { e.stopPropagation(); setEdit(true); }}>${w.text}</button>`;
 }
@@ -163,6 +164,10 @@ function Groups() {
         <div class="gw" style=${g.ov?.hidden ? 'opacity:.4' : ''}>
           ${g.items.map((it, i) => html`${i > 0 && html`<button class="gcut" title="Separar aquí" onClick=${e => { e.stopPropagation(); A.splitBefore(it.w.id); }}>|</button>`}<${WordChip} it=${it} />`)}
         </div>
+        ${g.items.some(x => x.w.hl === 2) && html`<div class="g-hero" onClick=${e => e.stopPropagation()}>
+          <span>Título</span>
+          ${[['', 'Plantilla'], ['stack', 'Debajo del subtítulo'], ['solo', 'Solo'], ['off', 'Dentro del texto']].map(([k, lb]) => html`<button class=${(g.ov?.heroMode || '') === k ? 'on' : ''} onClick=${() => A.setGroupStyle(g.id, { heroMode: k || null })}>${lb}</button>`)}
+        </div>`}
       </div>`;
     })}
   </div>`;
@@ -261,7 +266,10 @@ export function CaptionsPanel() {
           <${Btn} cls="sm" icon="sparkles" onClick=${A.runAutoHighlight}>Destacar automáticamente</${Btn}>
           <${Btn} cls="sm ghost" icon="repeat" onClick=${A.clearManualBreaks}>Reagrupar</${Btn}>
         </div>
-        <div class="hint-box"><b>Clic</b> en una palabra = destacar · <b>doble clic</b> = corregir · <b>|</b> = separar · <b>arrastra</b> una palabra al bloque de al lado para moverla · <b>doble clic en el reproductor</b> para reescribir el bloque (Intro = dos líneas)</div>
+        <div class="hint-box">
+          <div class="lvl-legend"><span class="gword">normal</span>→<span class="gword hl1">destacada</span>→<span class="gword hl2">muy destacada</span><span class="dim">clic en una palabra para cambiar su nivel</span></div>
+          La <b>destacada</b> cambia de color o tipografía según la plantilla, con el mismo tamaño. La <b>muy destacada</b> se convierte en un <b>título a todo el ancho</b>: debajo del subtítulo o sola (elígelo en cada bloque).<br/>
+          <b>Doble clic</b> = corregir · <b>|</b> = separar · <b>arrastra</b> una palabra al bloque de al lado · <b>doble clic en el reproductor</b> para reescribir el bloque (Intro = dos líneas)</div>
         <${Groups} />`}
     </div>`;
 }

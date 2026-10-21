@@ -20,7 +20,7 @@ export async function importFiles(files, handles = []) {
     const file = list[i];
     const kind = fileKind(file);
     if (!kind) { toast(`Formato no compatible: ${file.name}`, 'err'); continue; }
-    if (kind === 'audio') { toast('Los archivos de solo audio llegarán en una próxima versión', 'err'); continue; }
+    if (kind === 'audio') { await importAudio(file, handles[i]); continue; }
     try {
       busy({ title: 'Importando', text: file.name, progress: null });
       const { asset, url } = await probeFile(file);
@@ -50,12 +50,216 @@ export async function importFiles(files, handles = []) {
   if (added) { player.seek(timeBus.t); toast(added === 1 ? 'Vídeo añadido a la línea de tiempo' : `${added} archivos añadidos`); }
 }
 
+// ---------- Pista de audio (micro externo, música, voz en off) ----------
+async function importAudio(file, handle) {
+  try {
+    busy({ title: 'Importando audio', text: file.name, progress: null });
+    const { asset, url } = await probeFile(file);
+    runtime.assets.set(asset.id, { file, url, kind: 'audio', handle: handle || null, thumbs: [], audio: null, status: 'analyzing' });
+    const clip = { id: uid('au'), assetId: asset.id, start: 0, in: 0, out: asset.duration, volume: 1 };
+    update(p => { p.assets.push(asset); (p.audio = p.audio || []).push(clip); });
+    busy(null);
+    setUI({ sel: { type: 'audio', id: clip.id } });
+    await analyzeAsset(asset);
+    const PF = await import('./projectFolder.js');
+    if (PF.folderActive()) {
+      const raw = await PF.copyRaw(asset, file).catch(() => null);
+      if (raw) update(pp => { const a = pp.assets.find(x => x.id === asset.id); if (a) a.raw = raw; }, { history: false });
+    }
+    toast('Audio añadido a la pista de audio. Pulsa "Sincronizar" si es el mismo sonido que el del vídeo.', 'ok', 6000);
+  } catch (e) { busy(null); console.error(e); toast(`No se pudo abrir ${file.name}`, 'err'); }
+}
+
+export function updateAudio(id, patch, key) {
+  update(p => { const c = (p.audio || []).find(x => x.id === id); if (c) Object.assign(c, typeof patch === 'function' ? patch(c) : patch); }, { key });
+  player.resyncAudio();
+}
+
+// Envolvente de energía (100 por segundo) del audio de la línea de tiempo de vídeo
+function timelineEnvelope(p) {
+  const lay = TL.layoutClips(p.clips);
+  const total = TL.totalDuration(p);
+  const env = new Float32Array(Math.ceil(total * 100) + 1);
+  for (const l of lay) {
+    const rms = runtime.assets.get(l.clip.assetId)?.audio?.rms;
+    if (!rms) continue;
+    const sp = l.clip.speed || 1;
+    const a = Math.floor(l.start * 100), b = Math.floor(l.end * 100);
+    for (let i = a; i < b && i < env.length; i++) {
+      const src = l.clip.in + (i / 100 - l.start) * sp;
+      env[i] = rms[Math.min(rms.length - 1, Math.max(0, Math.round(src * 100)))] || 0;
+    }
+  }
+  return env;
+}
+// Realza los ataques (sílabas, golpes) para que la comparación sea precisa
+function onsets(env) {
+  const n = env.length, out = new Float32Array(n);
+  const lg = env.map(v => Math.log(v + 1e-4));
+  let mean = 0; for (const v of lg) mean += v; mean /= Math.max(1, n);
+  for (let i = 1; i < n; i++) out[i] = Math.max(0, lg[i] - lg[i - 1]) + 0.25 * (lg[i] - mean);
+  let m = 0; for (const v of out) m += v; m /= Math.max(1, n);
+  let s = 0; for (let i = 0; i < n; i++) { out[i] -= m; s += out[i] * out[i]; }
+  s = Math.sqrt(s) || 1;
+  for (let i = 0; i < n; i++) out[i] /= s;
+  return out;
+}
+/**
+ * Mejor desfase entre dos envolventes (100 por segundo): devuelve el retardo (s) que hay que aplicar a "b"
+ * para que coincida con "a" y la calidad de la coincidencia (0–1).
+ */
+export function bestLag(a, b, maxLag = null) {
+  const A = onsets(a), B = onsets(b);
+  const minL = -(B.length - 50), maxL = A.length - 50;
+  const lo = maxLag ? Math.max(minL, -maxLag * 100) : minL, hi = maxLag ? Math.min(maxL, maxLag * 100) : maxL;
+  let best = -Infinity, bestL = 0, second = -Infinity;
+  for (let L = lo; L <= hi; L++) {
+    let s = 0;
+    const i0 = Math.max(0, L), i1 = Math.min(A.length, B.length + L);
+    for (let i = i0; i < i1; i++) s += A[i] * B[i - L];
+    if (s > best) { if (Math.abs(L - bestL) > 20) second = best; best = s; bestL = L; }
+    else if (s > second && Math.abs(L - bestL) > 20) second = s;
+  }
+  const conf = best > 0 ? Math.max(0, Math.min(1, (best - Math.max(0, second)) / best * 2)) : 0;
+  return { lag: bestL / 100, score: best, conf };
+}
+
+// Sincroniza un audio de la pista de audio con el sonido del vídeo (como "sincronizar por forma de onda")
+export async function syncAudioClip(id) {
+  const p = P();
+  const c = (p.audio || []).find(x => x.id === id);
+  if (!c) return;
+  const rtA = runtime.assets.get(c.assetId);
+  if (!rtA?.audio) { toast('El audio aún se está analizando, prueba en unos segundos', 'err'); return; }
+  if (!p.clips.some(cl => runtime.assets.get(cl.assetId)?.audio)) { toast('El vídeo no tiene sonido para comparar', 'err'); return; }
+  busy({ title: 'Sincronizando audio', text: 'Comparando las dos formas de onda…', progress: null });
+  await new Promise(r => setTimeout(r, 30));
+  const V = timelineEnvelope(p);
+  const { lag, conf } = bestLag(V, rtA.audio.rms);
+  busy(null);
+  // lag = segundo de la línea de tiempo en el que empieza el archivo de audio
+  update(pp => {
+    const cc = pp.audio.find(x => x.id === id);
+    if (lag >= 0) { cc.start = lag; cc.in = 0; } else { cc.start = 0; cc.in = -lag; }
+    cc.out = Math.max(cc.in + 0.5, cc.out);
+  });
+  player.resyncAudio();
+  toast(conf > 0.25 ? `Audio sincronizado (desfase ${lag >= 0 ? '+' : ''}${lag.toFixed(2).replace('.', ',')} s)` : 'Sincronizado, pero la coincidencia es débil: revisa que sea el mismo sonido', conf > 0.25 ? 'ok' : 'err', 6000);
+  return { lag, conf };
+}
+
+// ---------- Montaje avanzado: persona duplicada ----------
+// Dos tomas verticales con el trípode quieto: en una la persona está a la izquierda (dejando hueco a la derecha)
+// y en la otra a la derecha. Se alinean para que se respondan y se juntan las dos mitades.
+
+// Voz (1) / silencio (0), 100 por segundo, con un pequeño margen para no cortar sílabas
+function speechActivity(rms) {
+  const thr = Math.pow(10, autoThreshold(rms) / 20);
+  const n = rms.length, act = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (rms[i] > thr) for (let k = Math.max(0, i - 12); k < Math.min(n, i + 25); k++) act[k] = 1;
+  return act;
+}
+/** Desfase (s) de la toma B respecto a A para que hablen por turnos (B-tiempo = A-tiempo + desfase). */
+export function bestTurnOffset(actA, actB) {
+  const nA = actA.length, nB = actB.length;
+  let best = -Infinity, bestOff = 0;
+  for (let off = -(nA - 200); off <= nB - 200; off += 2) {
+    let s = 0;
+    const t0 = Math.max(0, -off), t1 = Math.min(nA, nB - off);
+    if (t1 - t0 < 200) continue;
+    for (let t = t0; t < t1; t++) {
+      const a = actA[t], b = actB[t + off];
+      s += a !== b ? 1 : a ? -3 : 0; // premia que hable uno solo, penaliza que hablen a la vez
+    }
+    if (s > best) { best = s; bestOff = off; }
+  }
+  return bestOff / 100;
+}
+const median = (arr) => { const v = arr.filter(x => isFinite(x)).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : null; };
+function lumaOf(assetId) {
+  const th = runtime.assets.get(assetId)?.thumbs || [];
+  if (!th.length) return null;
+  const c = new OffscreenCanvas(16, 16), x = c.getContext('2d');
+  let s = 0, n = 0;
+  for (const t of th.slice(0, 8)) {
+    x.drawImage(t.bmp, 0, 0, 16, 16);
+    const d = x.getImageData(0, 0, 16, 16).data;
+    for (let i = 0; i < d.length; i += 4) { s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; n++; }
+  }
+  return s / n / 255;
+}
+
+// Cambia los ajustes de la persona duplicada en todos los clips del mismo montaje
+export function updateDual(clipId, patch, key) {
+  const c0 = P().clips.find(c => c.id === clipId);
+  if (!c0?.dual) return;
+  update(p => {
+    for (const c of p.clips) {
+      if (!c.dual || c.assetId !== c0.assetId || c.dual.assetId !== c0.dual.assetId) continue;
+      c.dual = { ...c.dual, ...(typeof patch === 'function' ? patch(c.dual) : patch) };
+    }
+  }, { key });
+  player.seek(timeBus.t);
+}
+
+export async function createDualMontage({ leftId, rightId, removePauses = true, feather = 0.035 } = {}) {
+  const p = P();
+  const A = assetById(leftId), B = assetById(rightId);
+  if (!A || !B || A.id === B.id) { toast('Elige dos tomas distintas', 'err'); return; }
+  busy({ title: 'Montaje de persona duplicada', text: 'Analizando el audio de las dos tomas…', progress: null });
+  try {
+    for (const a of [A, B]) {
+      const rt = runtime.assets.get(a.id);
+      if (!rt.audio) rt.audio = await analyzeAudio(rt.file);
+      if (!rt.audio) throw new Error(`${a.name} no tiene sonido`);
+    }
+    // ¿quién está a la izquierda? (posición de la cara)
+    busy({ title: 'Montaje de persona duplicada', text: 'Buscando a la persona en cada toma…', progress: null });
+    await ensureFaceTracks([A.id, B.id]).catch(() => {});
+    const fx = (id) => median((state.project.faceTracks?.[id]?.pts || []).filter(Boolean).map(q => q[0]));
+    let L = A, R = B, xL = fx(A.id), xR = fx(B.id);
+    if (xL !== null && xR !== null && xL > xR) { [L, R] = [B, A]; [xL, xR] = [xR, xL]; }
+    busy({ title: 'Montaje de persona duplicada', text: 'Alineando las tomas para que os respondáis…', progress: null });
+    await new Promise(r => setTimeout(r, 20));
+    const actL = speechActivity(runtime.assets.get(L.id).audio.rms), actR = speechActivity(runtime.assets.get(R.id).audio.rms);
+    const off = bestTurnOffset(actL, actR);
+    const r0 = Math.max(0, -off), r1 = Math.min(L.duration, R.duration - off);
+    const split = xL !== null && xR !== null ? clamp((xL + xR) / 2, 0.2, 0.8) : 0.5;
+    const lL = lumaOf(L.id), lR = lumaOf(R.id);
+    const gain = lL && lR ? clamp(lL / lR - 1, -0.25, 0.25) : 0;
+    const clip = { ...TL.newClip(L, r0, r1), dual: { assetId: R.id, off, split, feather, gain: Math.round(gain * 100) / 100, audio: 'ab', swap: false } };
+    update(pp => {
+      pp.clips = [clip];
+      if (removePauses) {
+        // quitar los ratos en los que no habla ninguno (deja 0,15 s de aire)
+        const ranges = [];
+        let s = null;
+        const i0 = Math.ceil(r0 * 100), i1 = Math.floor(r1 * 100);
+        for (let i = i0; i <= i1; i++) {
+          const talk = i < i1 && (actL[i] || actR[i + Math.round(off * 100)]);
+          if (!talk && s === null) s = i;
+          if ((talk || i === i1) && s !== null) {
+            if ((i - s) / 100 > 0.6) ranges.push({ start: s / 100 + 0.15, end: i / 100 - 0.15 });
+            s = null;
+          }
+        }
+        TL.removeSourceRanges(pp, L.id, ranges);
+      }
+    });
+    busy(null);
+    setUI({ sel: { type: 'clip', id: state.project.clips[0]?.id } });
+    player.seek(0);
+    toast(`Montaje creado: ${L.name} a la izquierda y ${R.name} a la derecha (desfase ${off >= 0 ? '+' : ''}${off.toFixed(2).replace('.', ',')} s)`, 'ok', 7000);
+  } catch (e) { busy(null); console.error(e); toast('No se pudo crear el montaje: ' + e.message, 'err', 6000); }
+}
+
 export async function analyzeAsset(asset) {
   const rt = runtime.assets.get(asset.id);
   if (!rt) return;
   rt.status = 'analyzing'; emit();
   try {
     if (asset.kind === 'image') rt.thumbs = await imageThumb(rt.url);
+    else if (asset.kind === 'audio') rt.audio = await analyzeAudio(rt.file);
     else {
       const [thumbs, audio] = await Promise.all([makeThumbs(rt.url, asset.duration), analyzeAudio(rt.file)]);
       rt.thumbs = thumbs; rt.audio = audio;
@@ -77,6 +281,7 @@ export function removeAsset(assetId) {
     p.clips = p.clips.filter(c => c.assetId !== assetId);
     p.assets = p.assets.filter(a => a.id !== assetId);
     p.overlays = p.overlays.filter(o => o.props?.assetId !== assetId);
+    p.audio = (p.audio || []).filter(o => o.assetId !== assetId);
     delete p.transcripts[assetId];
   });
   player.seek(Math.min(timeBus.t, player.duration));
@@ -96,6 +301,7 @@ export function deleteSelection() {
   if (!sel) return;
   if (sel.type === 'clip') { update(p => TL.deleteClip(p, sel.id)); setUI({ sel: null }); player.seek(Math.min(timeBus.t, player.duration)); }
   else if (sel.type === 'overlay') { update(p => { p.overlays = p.overlays.filter(o => o.id !== sel.id); }); setUI({ sel: null }); }
+  else if (sel.type === 'audio') { update(p => { p.audio = (p.audio || []).filter(o => o.id !== sel.id); }); setUI({ sel: null }); player.resyncAudio(); }
   else if (sel.type === 'group') { setGroupStyle(sel.id, { hidden: true }); }
 }
 
@@ -161,7 +367,7 @@ export function removeSilences(byAsset) {
 // ---------- Transcripción ----------
 export async function transcribeAll({ model, lang, force = false }) {
   const p = P();
-  const todo = p.assets.filter(a => a.kind === 'video' && a.hasAudio !== false && p.clips.some(c => c.assetId === a.id) && (force || !p.transcripts[a.id]));
+  const todo = p.assets.filter(a => a.kind === 'video' && a.hasAudio !== false && p.clips.some(c => c.assetId === a.id || c.dual?.assetId === a.id) && (force || !p.transcripts[a.id]));
   if (!todo.length) { toast('No hay vídeos pendientes de transcribir'); return; }
   for (const a of todo) {
     const rt = runtime.assets.get(a.id);
