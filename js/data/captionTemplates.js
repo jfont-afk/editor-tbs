@@ -88,6 +88,38 @@ const RAW = [
     shadow: OFF, reveal: 'word', anim: 'soft', animDur: 0.6, out: 'fade', words: 4, maxChars: 24, posY: 0.66,
   },
 ];
+// Cine: sencillas y elegantes (serif para contenido pausado, minúsculas, interletrado amplio, sombra suave)
+RAW.push(
+  {
+    id: 'v2-cine-serif', name: 'Cine serif', ref: 'Playfair fina, como los subtítulos de una película', cat: 'Cine',
+    font: { family: F.serif, weight: 500, style: 'normal', size: 54, upper: false, lh: 1.18, ls: 0 },
+    color: C.white, hl: { color: C.white, style: 'italic', weight: 600 },
+    hero: HERO({ family: F.serif, style: 'italic', weight: 600, upper: false, color: C.white, ls: -0.01, underline: false, anim: 'blur' }), heroMode: 'stack',
+    shadow: SH(20, 2, 0.6), reveal: 'word', anim: 'fade', animDur: 1.1, out: 'fade', words: 5, maxChars: 30, posY: 0.64,
+  },
+  {
+    id: 'v2-documental', name: 'Documental', ref: 'Minúsculas finas con aire, para entrevistas', cat: 'Cine',
+    font: { family: F.body, weight: 500, style: 'normal', size: 50, upper: false, lower: true, lh: 1.2, ls: 0.01 },
+    color: C.white, hl: { color: C.fluor, weight: 700 },
+    hero: HERO({ family: F.head, weight: 500, color: C.white, ls: 0.22, underline: false, anim: 'blur' }), heroMode: 'stack',
+    shadow: SH(18, 2, 0.6), reveal: 'word', anim: 'blurIn', animDur: 1, out: 'fade', words: 5, maxChars: 30, posY: 0.64,
+  },
+  {
+    id: 'v2-pelicula', name: 'Título de película', ref: 'Mayúsculas pequeñas con mucho interletrado', cat: 'Cine',
+    font: { family: F.head, weight: 500, style: 'normal', size: 40, upper: true, lh: 1.3, ls: 0.16 },
+    color: C.white, hl: { color: C.fluor },
+    hero: HERO({ family: F.head, weight: 600, color: C.white, ls: 0.12, underline: false, anim: 'letters' }), heroMode: 'solo',
+    shadow: SH(16, 2, 0.55), reveal: 'word', anim: 'fade', animDur: 1.1, out: 'fade', words: 4, maxChars: 26, posY: 0.62, punct: 'strip',
+  },
+  {
+    id: 'v2-intimo', name: 'Íntimo', ref: 'Minúsculas limpias y acento en serif itálica', cat: 'Cine',
+    font: { family: F.head, weight: 500, style: 'normal', size: 56, upper: false, lower: true, lh: 1.12, ls: -0.025 },
+    color: C.white, hl: { color: C.fluor, family: F.serif, style: 'italic', weight: 500 },
+    hero: HERO({ family: F.serif, style: 'italic', weight: 500, upper: false, color: C.white, ls: -0.015, line: C.fluor, anim: 'blur' }), heroMode: 'stack',
+    shadow: SH(18, 2, 0.55), reveal: 'word', anim: 'soft', animDur: 0.9, out: 'fade', words: 4, maxChars: 26, posY: 0.64,
+  },
+);
+
 // Plantillas antiguas → la más parecida del pack nuevo (los proyectos guardados siguen funcionando)
 export const TEMPLATE_ALIAS = {
   'tbs-editorial': 'v2-fluor', 'tbs-nativo': 'v2-minimal', 'tbs-escalonado': 'v2-editorial', 'tbs-minimal': 'v2-minimal', 'tbs-acento': 'v2-editorial',
@@ -128,7 +160,7 @@ export function normalizeTemplate(t) {
 }
 
 export const CAPTION_TEMPLATES = RAW.map(normalizeTemplate);
-export const TEMPLATE_CATS = ['Esenciales', 'Dinámicos', 'Con fondo'];
+export const TEMPLATE_CATS = ['Esenciales', 'Dinámicos', 'Cine', 'Con fondo'];
 export const HERO_MODES = [['stack', 'Subtítulo + título'], ['solo', 'Título solo'], ['off', 'Sin título']];
 export const HERO_ANIMS = [['mask', 'Máscara que sube'], ['pop', 'Golpe'], ['blur', 'Desenfoque'], ['letters', 'Letra a letra']];
 

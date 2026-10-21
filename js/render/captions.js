@@ -26,13 +26,13 @@ const glowOf = (g) => (g && g.on !== false && (g.blur || 0) > 0 ? g : null);
 
 // Tipografía efectiva de una palabra (normal / destacado 1 / destacado 2)
 export function wordFont(st, hl) {
-  const base = { family: st.font.family, weight: st.font.weight, style: st.font.style, upper: st.font.upper, ls: st.font.ls ?? 0, scale: 1, color: st.color, glow: glowOf(st.glow) };
+  const base = { family: st.font.family, weight: st.font.weight, style: st.font.style, upper: st.font.upper, lower: !st.font.upper && !!st.font.lower, ls: st.font.ls ?? 0, scale: 1, color: st.color, glow: glowOf(st.glow) };
   // nivel 2 dentro del texto (cuando no se usa como título) se ve como la destacada
   const h = hl === 1 ? st.hl : hl === 2 ? (st.hl2 && Object.keys(st.hl2).length ? st.hl2 : st.hl) : null;
   if (!h) return base;
   return {
     family: h.family || base.family, weight: h.weight || base.weight, style: h.style || (h.family ? 'normal' : base.style),
-    upper: h.upper ?? base.upper, ls: h.ls ?? (h.family ? Math.min(0, base.ls) * 0.3 : base.ls), scale: h.scale || 1, color: h.color || base.color,
+    upper: h.upper ?? base.upper, lower: h.upper ? false : base.lower, ls: h.ls ?? (h.family ? Math.min(0, base.ls) * 0.3 : base.ls), scale: h.scale || 1, color: h.color || base.color,
     glow: h.glow !== undefined ? glowOf(h.glow) : base.glow,
   };
 }
@@ -41,7 +41,7 @@ export function cleanWord(raw, st, wf) {
   let t = raw.trim().replace(/[.,;:…]+$/u, '');
   if (st.punct === 'strip') t = t.replace(/^[«"“'¿¡(]+|[»"”')]+$/gu, '');
   if (!t) t = raw.trim();
-  return wf.upper ? t.toLocaleUpperCase('es-ES') : t;
+  return wf.upper ? t.toLocaleUpperCase('es-ES') : wf.lower ? t.toLocaleLowerCase('es-ES') : t;
 }
 
 /**
