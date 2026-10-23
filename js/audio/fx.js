@@ -5,12 +5,12 @@
 //   presence  presencia / claridad (3,2 kHz, dB)                0 … +8
 //   air       brillo (9 kHz, dB)                               −6 … +6
 //   comp      compresión (igualar partes flojas y fuertes)      0 … 1
-//   gate      reducir el ruido de fondo entre frases            0 … 1
+//   gate      reducir el ruido de fondo (también bajo la voz)  0 … 1  (0 = sin efecto … 1 = hasta −30 dB)
 //   deess     suavizar las eses                                 0 … 1
 //   fadeIn / fadeOut  fundidos de entrada y salida (s)
 //   duck      solo pista de audio: bajar mientras se habla      0 … 1
 
-export const VOZ_CLARA = { preset: 'voz', hp: 1, body: -2.5, presence: 3.5, air: 2, comp: 0.55, gate: 0.45, deess: 0.45 };
+export const VOZ_CLARA = { preset: 'voz', hp: 1, body: -2.5, presence: 3.5, air: 2, comp: 0.55, gate: 0.9, deess: 0.45 };
 export const NEUTRAL = { preset: null, hp: 0, body: 0, presence: 0, air: 0, comp: 0, gate: 0, deess: 0 };
 const KEYS = Object.keys(NEUTRAL).filter(k => k !== 'preset');
 
@@ -19,11 +19,25 @@ export const hasFx = (fx) => !!fx && KEYS.some(k => Math.abs(fx[k] || 0) > 1e-3)
 export const hasFades = (fx) => !!fx && ((fx.fadeIn || 0) > 0.01 || (fx.fadeOut || 0) > 0.01);
 export const isVozClara = (fx) => !!fx && KEYS.every(k => Math.abs((fx[k] || 0) - VOZ_CLARA[k]) < 1e-3);
 
+// Retraso fijo del procesador de voz (reducción de ruido por STFT + tramas de RNNoise), en muestras.
+// Al exportar se compensa (las fuentes que pasan por él empiezan antes); en la vista previa son ~29 ms.
+export const VOICE_LATENCY = 1376;
+
 const WORKLET_URL = new URL('./voice-worklet.js', import.meta.url).href;
+const RNNOISE_URL = new URL('../vendor/rnnoise.wasm', import.meta.url).href;
+let rnnoise = null;
+// RNNoise (red neuronal de Xiph) se descarga una vez; cada nodo recibe los bytes y el worklet lo compila una vez por contexto
+function loadRnnoise() {
+  if (!rnnoise) rnnoise = fetch(RNNOISE_URL).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+    .then(b => (WebAssembly.validate(b) ? b : null)).catch((e) => { console.warn('rnnoise', e); return null; });
+  return rnnoise;
+}
 const loaded = new WeakMap();
-// Carga los procesadores propios en un contexto (si falla, la cadena funciona sin puerta ni de-esser)
+// Carga los procesadores propios en un contexto (si falla, la cadena funciona sin reducción de ruido ni de-esser;
+// sin RNNoise, la reducción de ruido sigue con el supresor espectral)
 export function loadWorklet(ctx) {
-  if (!loaded.has(ctx)) loaded.set(ctx, (ctx.audioWorklet ? ctx.audioWorklet.addModule(WORKLET_URL) : Promise.reject(new Error('sin AudioWorklet'))).then(() => true, (e) => { console.warn('audio worklet', e); return false; }));
+  if (!loaded.has(ctx)) loaded.set(ctx, (ctx.audioWorklet ? Promise.all([ctx.audioWorklet.addModule(WORKLET_URL), loadRnnoise()]) : Promise.reject(new Error('sin AudioWorklet')))
+    .then(([, rnn]) => ({ rnnoise: rnn }), (e) => { console.warn('audio worklet', e); return false; }));
   return loaded.get(ctx);
 }
 
@@ -54,7 +68,8 @@ export class FxChain {
     this.pres = ctx.createBiquadFilter(); this.pres.type = 'peaking'; this.pres.frequency.value = 3200; this.pres.Q.value = 0.8;
     this.air = ctx.createBiquadFilter(); this.air.type = 'highshelf'; this.air.frequency.value = 9000;
     this.voice = null;
-    if (worklet) { try { this.voice = new AudioWorkletNode(ctx, 'tbs-voice', { outputChannelCount: [2] }); } catch (e) { console.warn(e); } }
+    if (worklet) { try { this.voice = new AudioWorkletNode(ctx, 'tbs-voice', { outputChannelCount: [2], processorOptions: { rnnoise: worklet.rnnoise || null } }); } catch (e) { console.warn(e); } }
+    this.latency = this.voice ? VOICE_LATENCY / ctx.sampleRate : 0;   // s
     this.comp = ctx.createDynamicsCompressor();
     this.comp.knee.value = 8; this.comp.attack.value = 0.004; this.comp.release.value = 0.18;
     this.makeup = ctx.createGain();

@@ -19,7 +19,7 @@ export function AudioFixes({ fx, set, track = false, applyAll }) {
       ${hasFx(f) && html`<${Btn} cls=${'sm' + (orig ? ' primary' : '')} title="Escucha el sonido sin corregir para comparar" onClick=${() => setUI({ audioOrig: !orig })}>${orig ? 'Oyendo el original' : 'Comparar'}</${Btn}>`}
     </div>
     <div class="dim small">${voz
-      ? 'Quita retumbe y ruido de fondo, suaviza las eses, da presencia a la voz e iguala el volumen. Se oye al reproducir.'
+      ? 'Quita el ruido de fondo (también mientras hablas: ventilador, aire, tráfico, sala) y el retumbe, suaviza las eses, da presencia a la voz e iguala el volumen. Se oye al reproducir.'
       : 'Un clic para que la voz suene limpia y cercana. Debajo puedes ajustar cada cosa.'}</div>
     <${Toggle} label="Quitar retumbe" sub="Golpes, tráfico, aire acondicionado (graves por debajo de 80 Hz)" value=${!!f.hp} onChange=${v => set({ hp: v ? 1 : 0 })} />
     <${Slider} label="Reducir ruido de fondo" value=${f.gate} min=${0} max=${1} step=${0.01} format=${pct} onInput=${v => set({ gate: v }, 'gate')} />

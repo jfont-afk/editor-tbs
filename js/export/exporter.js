@@ -43,7 +43,11 @@ async function pickAudioConfig(sampleRate) {
 
 export async function mixAudio(p, sr = 48000) {
   const dur = totalDuration(p);
-  const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil((dur + 0.05) * sr)), sr);
+  // La reducción de ruido devuelve el sonido con un retraso fijo (ch.latency): esas fuentes se colocan antes
+  // y todo se mezcla con PRE segundos de margen al principio, que se recortan al final (el audio queda en sincronía con el vídeo)
+  const PRE = 0.05;
+  const len = Math.max(1, Math.ceil((dur + 0.05) * sr)), off = Math.round(PRE * sr);
+  const ctx = new OfflineAudioContext(2, len + off, sr);
   const decoded = new Map();
   const used = new Set([...p.clips.map(c => c.assetId), ...p.clips.filter(c => c.dual).map(c => c.dual.assetId), ...(p.audio || []).map(a => a.assetId)]);
   for (const a of p.assets) {
@@ -58,8 +62,9 @@ export async function mixAudio(p, sr = 48000) {
   voiceBus.connect(ctx.destination);
   // los clips con los mismos ajustes comparten cadena (no se solapan en el tiempo: sus fundidos van en la misma ganancia)
   const shared = new Map();
+  // destino de un tramo que suena en t: { node, at } (at = cuándo debe empezar la fuente)
   const target = (fx, t, d, own = false) => {
-    if (!hasFx(fx) && !hasFades(fx) && !(fx?.duck > 0)) return voiceBus;
+    if (!hasFx(fx) && !hasFades(fx) && !(fx?.duck > 0)) return { node: voiceBus, at: t + PRE };
     const { fadeIn = 0, fadeOut = 0, ...rest } = fx;
     const key = JSON.stringify(rest);
     let ch = own ? null : shared.get(key);
@@ -73,11 +78,12 @@ export async function mixAudio(p, sr = 48000) {
       } else ch.output.connect(voiceBus);
       if (!own) shared.set(key, ch);
     }
-    const fi = Math.min(fadeIn, d / 2), fo = Math.min(fadeOut, d / 2), g = ch.fade.gain;
-    g.setValueAtTime(fi > 0.01 ? 0 : 1, t);
-    if (fi > 0.01) g.linearRampToValueAtTime(1, t + fi);
-    if (fo > 0.01) { g.setValueAtTime(1, t + d - fo); g.linearRampToValueAtTime(0, t + d); }
-    return ch.input;
+    // los fundidos van después de la reducción de ruido: en la línea de tiempo de salida
+    const fi = Math.min(fadeIn, d / 2), fo = Math.min(fadeOut, d / 2), g = ch.fade.gain, T = t + PRE;
+    g.setValueAtTime(fi > 0.01 ? 0 : 1, T);
+    if (fi > 0.01) g.linearRampToValueAtTime(1, T + fi);
+    if (fo > 0.01) { g.setValueAtTime(1, T + d - fo); g.linearRampToValueAtTime(0, T + d); }
+    return { node: ch.input, at: T - ch.latency };
   };
   // coloca un trozo [s0, s1] de un audio en el instante t (con velocidad y fundidos cortos para evitar chasquidos)
   const place = (buf, t, s0, s1, sp, vol, out = voiceBus) => {
@@ -99,17 +105,20 @@ export async function mixAudio(p, sr = 48000) {
     const vol = p.muted ? 0 : (c.volume ?? 1);
     const sp = c.speed || 1;
     const mode = c.dual?.audio || 'ab';
-    const out = vol > 0.001 ? target(c.fx, t, d) : voiceBus;
-    if (!c.dual || mode !== 'b') place(decoded.get(c.assetId), t, c.in, c.out, sp, vol, out);
-    if (c.dual && mode !== 'a') { const off = c.dual.off || 0; place(decoded.get(c.dual.assetId), t, c.in + off, c.out + off, sp, vol, out); }
+    const o = vol > 0.001 ? target(c.fx, t, d) : { node: voiceBus, at: t + PRE };
+    if (!c.dual || mode !== 'b') place(decoded.get(c.assetId), o.at, c.in, c.out, sp, vol, o.node);
+    if (c.dual && mode !== 'a') { const off2 = c.dual.off || 0; place(decoded.get(c.dual.assetId), o.at, c.in + off2, c.out + off2, sp, vol, o.node); }
     t += d;
   }
   // pista de audio libre (micro externo, música…)
   for (const a of p.audio || []) {
     const s1 = Math.min(a.out, a.in + Math.max(0, dur - a.start)), vol = p.audioMuted ? 0 : (a.volume ?? 1);
-    if (vol > 0.001 && s1 > a.in) place(decoded.get(a.assetId), a.start, a.in, s1, 1, vol, target(a.fx, a.start, a.out - a.in, true));
+    if (vol > 0.001 && s1 > a.in) { const o = target(a.fx, a.start, a.out - a.in, true); place(decoded.get(a.assetId), o.at, a.in, s1, 1, vol, o.node); }
   }
-  return ctx.startRendering();
+  const mix = await ctx.startRendering();
+  const res = new AudioBuffer({ length: len, numberOfChannels: 2, sampleRate: sr });
+  for (let c = 0; c < 2; c++) res.copyToChannel(mix.getChannelData(c).subarray(off, off + len), c);
+  return res;
 }
 
 /**
