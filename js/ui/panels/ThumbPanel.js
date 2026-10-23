@@ -14,7 +14,7 @@ import { TBS_ICON_OPTIONS } from '../../data/tbsIcons.js';
 
 const TF = { '9x16': [1080, 1920], '16x9': [1280, 720], '1x1': [1080, 1080], '4x5': [1080, 1350] };
 const FAM = { head: F.head, body: F.body, serif: F.serif, script: F.script, mono: F.mono };
-const FONT_OPTS = [['head', 'Space Grotesk'], ['body', 'Raleway'], ['serif', 'Playfair Display'], ['mono', 'Geist Mono'], ['script', 'Sacramento']];
+const FONT_OPTS = [['head', 'Space Grotesk'], ['body', 'Raleway'], ['serif', 'Playfair Display']];
 const WEIGHTS = { head: [400, 500, 700], body: [400, 500, 600, 700, 800, 900], serif: [400, 500, 600, 700, 800, 900], script: [400], mono: [400, 500, 700] };
 const TONE = { yellow: C.yellow, sky: C.sky, blue: C.blue, magenta: C.magenta, green: C.green, fluor: C.fluor, dark: C.n900, white: C.white };
 export const HANDLE = '@traderbusinessschool';
@@ -27,6 +27,7 @@ const SOLID = [
   { id: 'magenta', name: 'Magenta', bg: C.magenta, title: C.magentaInk, accent: C.magentaInk, body: C.magentaInk },
   { id: 'dark', name: 'Oscuro', bg: C.n900, title: C.white, accent: C.fluor, body: C.white },
   { id: 'crema', name: 'Crema', bg: C.crema, title: C.n900, accent: C.magenta, body: C.n900 },
+  { id: 'crema-rojo', name: 'Crema · Rojo TBS', bg: C.crema, title: C.n900, accent: C.red, body: C.n900 },
 ];
 const PHOTO = [
   { id: 'fluor', name: 'Blanco + Fluor', title: C.white, accent: C.fluor, body: C.white, box: C.fluor, boxInk: C.n900 },
@@ -34,6 +35,7 @@ const PHOTO = [
   { id: 'blue', name: 'Blanco + Azul', title: C.white, accent: C.sky, body: C.white, box: C.blue, boxInk: C.white },
   { id: 'yellow', name: 'Blanco + Amarillo', title: C.white, accent: C.yellow, body: C.white, box: C.yellow, boxInk: C.n900 },
   { id: 'white', name: 'Caja blanca', title: C.white, accent: C.white, body: C.white, box: C.white, boxInk: C.n900 },
+  { id: 'red', name: 'Blanco + Rojo TBS', title: C.white, accent: C.red, body: C.white, box: C.red, boxInk: C.white },
 ];
 
 const T = (o) => ({ id: uid('l'), kind: 'text', font: 'head', weight: 700, italic: false, upper: false, size: 120, align: 'left', ls: -0.035, lh: 0.95, maxW: 0.86, shadow: false, box: false, behind: false, ...o });
@@ -62,9 +64,9 @@ export const THUMB_TEMPLATES = [
       return [
         { id: uid('l'), kind: 'pill', role: 'title', text: 'Webinar Traders', icon: 'video', size: v ? 52 : 46, x: X(0), y: Y(0) },
         T({ role: 'title', text: 'INVERTIR,', size: v ? 220 : 200, x: X(0), y: Y(v ? 0.075 : 0.15), maxW: mw, lh: 0.9 }),
-        T({ role: 'title', text: 'SIN ARRIESGAR', size: v ? 130 : 118, x: X(0), y: Y(v ? 0.2 : 0.41), maxW: mw }),
-        { id: uid('l'), kind: 'icons', role: 'title', icons: ['handCoins', 'euro'], tones: ['yellow', 'sky'], size: v ? 108 : 92, x: X(0), y: Y(v ? 0.29 : 0.585) },
-        T({ role: 'title', text: 'TU CAPITAL.', size: v ? 130 : 118, x: X(v ? 0.235 : 0.17), y: Y(v ? 0.288 : 0.58), maxW: v ? S.w * 0.76 : S.w * 0.45 }),
+        T({ role: 'title', text: 'SIN ARRIESGAR', size: v ? 130 : 118, x: X(0), y: Y(v ? 0.215 : 0.42), maxW: mw }),
+        { id: uid('l'), kind: 'icons', role: 'title', icons: ['handCoins', 'euro'], tones: ['yellow', 'sky'], size: v ? 108 : 92, x: X(0), y: Y(v ? 0.305 : 0.595) },
+        T({ role: 'title', text: 'TU CAPITAL.', size: v ? 130 : 118, x: X(v ? 0.235 : 0.17), y: Y(v ? 0.303 : 0.59), maxW: v ? S.w * 0.76 : S.w * 0.45 }),
         T({ role: 'body', text: HANDLE, font: 'head', weight: 500, size: v ? 42 : 36, x: X(0), y: Y(v ? 0.955 : 0.94), ls: -0.01 }),
       ];
     },
@@ -139,6 +141,144 @@ export const THUMB_TEMPLATES = [
       ];
     },
   },
+  // ---- Portadas elegidas por el equipo en Pinterest (P02…P49), adaptadas a letras y colores TBS ----
+  {
+    id: 'etiqueta-serif', name: 'Etiqueta + serif', ref: 'Etiqueta, titular y remate en Playfair itálica abajo a la izquierda (P02)', palette: 'photo', pal: 'fluor',
+    bg: { photo: 'full', fit: 'cover', anchor: 'center', zoom: 1, offX: 0, offY: 0, darken: 0.55, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        { id: uid('l'), kind: 'pill', role: 'body', text: 'Curso de trading', icon: '', size: v ? 40 : 34, x: X(0), y: Y(v ? 0.7 : 0.52) },
+        T({ role: 'title', text: 'Invierte con', size: v ? 128 : 104, x: X(0), y: Y(v ? 0.76 : 0.63), maxW: S.w, shadow: true }),
+        T({ role: 'accent', text: 'cabeza fría', font: 'serif', weight: 600, italic: true, size: v ? 142 : 116, x: X(0), y: Y(v ? 0.84 : 0.79), maxW: S.w, ls: -0.025, shadow: true }),
+      ];
+    },
+  },
+  {
+    id: 'palabra', name: 'Una palabra', ref: 'Una palabra enorme en minúsculas con punto de color y frase debajo (P03)', palette: 'photo', pal: 'fluor',
+    bg: { photo: 'full', fit: 'cover', anchor: 'center', zoom: 1, offX: 0, offY: 0, darken: 0.4, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        T({ role: 'body', text: 'Antes de cada gran movimiento, hay', weight: 600, size: v ? 38 : 32, align: 'center', x: X(0.5), y: Y(0.02), ls: -0.01, shadow: true }),
+        T({ role: 'title', text: 'paciencia*.*', size: v ? 230 : 200, align: 'center', x: X(0.5), y: Y(v ? 0.045 : 0.08), maxW: S.w, ls: -0.06, lh: 0.9, shadow: true }),
+        T({ role: 'body', text: 'La pausa en la que el mercado te enseña.', weight: 600, size: v ? 40 : 34, align: 'center', x: X(0.5), y: Y(v ? 0.205 : 0.4), ls: -0.01, shadow: true }),
+      ];
+    },
+  },
+  {
+    id: 'titulo-detras', name: 'Título detrás', ref: 'Palabra gigante detrás de la cabeza y frase en una caja de selección (P05)', palette: 'photo', pal: 'fluor',
+    bg: { photo: 'full', fit: 'cover', anchor: 'center', zoom: 1, offX: 0, offY: 0, darken: 0.15, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        T({ role: 'title', text: 'Disciplina', size: v ? 250 : 220, align: 'center', x: X(0.5), y: Y(0.02), maxW: S.w, ls: -0.055, behind: true, shadow: true }),
+        T({ role: 'body', text: 'Opera con un *plan*, no con emociones', weight: 600, size: v ? 40 : 34, align: 'center', x: X(0.5), y: Y(v ? 0.5 : 0.55), frame: 'dashed', shadow: true }),
+        T({ role: 'body', text: 'La disciplina es\nla mejor estrategia', weight: 600, size: v ? 36 : 32, align: 'right', x: X(1), y: Y(0.9), lh: 1.1, ls: -0.01, shadow: true }),
+      ];
+    },
+  },
+  {
+    id: 'corchetes', name: 'Corchetes', ref: 'Titular, frase entre corchetes y remate en color (P06)', palette: 'photo', pal: 'fluor',
+    bg: { photo: 'full', fit: 'cover', anchor: 'center', zoom: 1, offX: 0, offY: 0, darken: 0.3, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        T({ role: 'body', text: HANDLE, weight: 600, size: v ? 38 : 32, x: X(0), y: Y(0), ls: -0.01, shadow: true }),
+        T({ role: 'title', text: 'Estrategias', size: v ? 170 : 140, align: 'center', x: X(0.5), y: Y(v ? 0.36 : 0.3), maxW: S.w, ls: -0.05, shadow: true }),
+        T({ role: 'body', text: '[ para operar en ]', weight: 500, size: v ? 50 : 42, align: 'center', x: X(0.5), y: Y(v ? 0.49 : 0.52), ls: -0.02, shadow: true }),
+        T({ role: 'accent', text: 'Bolsa USA', size: v ? 150 : 124, align: 'center', x: X(0.5), y: Y(v ? 0.535 : 0.62), maxW: S.w, ls: -0.05, shadow: true }),
+        { id: uid('l'), kind: 'logo', role: 'body', mode: 'mark', size: v ? 60 : 52, x: X(0.92), y: Y(0.93) },
+      ];
+    },
+  },
+  {
+    id: 'revista-serif', name: 'Revista serif', ref: 'Etiquetas, Playfair recta e itálica y círculo fino sobre fondo liso (P13)', palette: 'solid', pal: 'olive',
+    bg: { photo: 'cutout', fit: 'cover', anchor: 'bottom', zoom: 0.9, offX: 0, offY: 0.12, darken: 0, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        { id: uid('l'), kind: 'ring', role: 'title', size: v ? 400 : 300, width: 2.5, x: 0.5, y: Y(v ? 0.38 : 0.45), alpha: 0.6, behind: true },
+        T({ role: 'body', text: HANDLE, weight: 500, size: v ? 36 : 32, align: 'center', x: X(0.5), y: Y(0), ls: -0.01 }),
+        { id: uid('l'), kind: 'pill', role: 'title', text: 'Cómo invierto', icon: '', filled: true, size: v ? 38 : 32, x: X(v ? 0.2 : 0.25), y: Y(v ? 0.09 : 0.06) },
+        T({ role: 'title', text: 'Mis ahorros', font: 'serif', weight: 500, size: v ? 170 : 140, align: 'center', x: X(0.5), y: Y(v ? 0.17 : 0.2), maxW: S.w, ls: -0.03 }),
+        T({ role: 'accent', text: 'siendo autónomo', font: 'serif', weight: 500, italic: true, size: v ? 120 : 100, align: 'center', x: X(0.5), y: Y(v ? 0.315 : 0.44), maxW: S.w, ls: -0.02 }),
+        T({ role: 'body', text: '(3 claves)', weight: 600, size: v ? 36 : 32, align: 'right', x: X(0.92), y: Y(v ? 0.42 : 0.62), ls: -0.01 }),
+      ];
+    },
+  },
+  {
+    id: 'bloque', name: 'Bloque', ref: 'Titular en mayúsculas muy gruesas y centrado en color (P20)', palette: 'photo', pal: 'yellow',
+    bg: { photo: 'full', fit: 'cover', anchor: 'center', zoom: 1, offX: 0, offY: 0, darken: 0.5, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        T({ role: 'accent', text: 'Traders Business School', weight: 700, size: v ? 36 : 32, align: 'center', x: X(0.5), y: Y(v ? 0.12 : 0.02), ls: -0.01, shadow: true }),
+        T({ role: 'accent', text: 'LO QUE\nAPRENDIMOS\nESTA SEMANA', size: v ? 150 : 120, align: 'center', x: X(0.5), y: Y(v ? 0.2 : 0.15), maxW: S.w, ls: -0.05, lh: 0.88, shadow: true }),
+      ];
+    },
+  },
+  {
+    id: 'script-cruzado', name: 'Itálica cruzada', ref: 'Mayúsculas gruesas con una palabra en Playfair itálica cruzando por medio (P30)', palette: 'photo', pal: 'fluor',
+    bg: { photo: 'full', fit: 'cover', anchor: 'center', zoom: 1, offX: 0, offY: 0, darken: 0.35, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        T({ role: 'body', text: 'RESULTADOS DEL MES', weight: 500, size: v ? 36 : 32, align: 'center', x: X(0.5), y: Y(0), ls: 0.08, shadow: true }),
+        T({ role: 'title', text: 'NUESTRO', size: v ? 190 : 150, align: 'center', x: X(0.5), y: Y(v ? 0.16 : 0.12), maxW: S.w, ls: -0.05, lh: 0.9, shadow: true }),
+        T({ role: 'accent', text: 'Mejor', font: 'serif', weight: 600, italic: true, size: v ? 270 : 210, align: 'center', x: X(0.5), y: Y(v ? 0.25 : 0.3), maxW: S.w, ls: 0, lh: 1, shadow: true }),
+        T({ role: 'title', text: 'MES', size: v ? 230 : 180, align: 'center', x: X(0.5), y: Y(v ? 0.45 : 0.6), maxW: S.w, ls: -0.05, lh: 0.9, shadow: true }),
+        T({ role: 'body', text: 'Lo que hemos aprendido operando\neste mes, sin filtros.', weight: 500, size: v ? 34 : 30, x: X(0), y: Y(0.92), lh: 1.15, ls: 0, shadow: true }),
+        T({ role: 'body', text: 'OCTUBRE\n2026', weight: 700, size: v ? 36 : 32, align: 'right', x: X(1), y: Y(0.92), lh: 1.1, ls: 0.02, shadow: true }),
+      ];
+    },
+  },
+  {
+    id: 'portada-revista', name: 'Portada de revista', ref: 'Cabecera de revista, pregunta gigante detrás y palabra fantasma en Playfair (P31)', palette: 'photo', pal: 'red',
+    bg: { photo: 'full', fit: 'cover', anchor: 'center', zoom: 1, offX: 0, offY: 0, darken: 0.25, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        T({ role: 'body', text: 'TRADING', font: 'head', weight: 500, size: v ? 34 : 30, x: X(0), y: Y(0), ls: 0.06, shadow: true }),
+        T({ role: 'body', text: 'ANÁLISIS', font: 'head', weight: 500, size: v ? 34 : 30, align: 'center', x: X(0.5), y: Y(0), ls: 0.06, shadow: true }),
+        T({ role: 'body', text: 'ESTRATEGIA', font: 'head', weight: 500, size: v ? 34 : 30, align: 'right', x: X(1), y: Y(0), ls: 0.06, shadow: true }),
+        T({ role: 'title', text: '¿HABLAS EL IDIOMA DEL', weight: 500, size: v ? 64 : 54, align: 'center', x: X(0.5), y: Y(0.06), maxW: S.w, ls: -0.03, shadow: true }),
+        T({ role: 'accent', text: 'MERCADO?', size: v ? 240 : 200, align: 'center', x: X(0.5), y: Y(v ? 0.11 : 0.17), maxW: S.w, ls: -0.06, lh: 0.9, behind: true, shadow: true }),
+        T({ role: 'title', text: 'Bolsa', font: 'serif', weight: 600, italic: true, size: v ? 330 : 260, align: 'center', x: X(0.5), y: Y(v ? 0.42 : 0.38), maxW: S.w, ls: 0, alpha: 0.45 }),
+        T({ role: 'body', text: 'Si tu estrategia no tiene reglas,\n*no es una estrategia.*', weight: 600, size: v ? 38 : 32, align: 'center', x: X(0.5), y: Y(v ? 0.84 : 0.8), lh: 1.15, ls: -0.01, frame: 'dashed', shadow: true }),
+      ];
+    },
+  },
+  {
+    id: 'serif-script', name: 'Serif + itálica', ref: 'Frase en Playfair y una palabra enorme en Playfair itálica de color (P47)', palette: 'photo', pal: 'fluor',
+    bg: { photo: 'full', fit: 'cover', anchor: 'center', zoom: 1, offX: 0, offY: 0, darken: 0.35, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        T({ role: 'title', text: 'trading', font: 'serif', weight: 600, italic: true, size: v ? 420 : 320, align: 'center', x: X(0.5), y: Y(v ? 0.04 : 0), maxW: S.w * 1.05, ls: 0, alpha: 0.22, behind: true }),
+        T({ role: 'body', text: 'Traders Business School', weight: 600, size: v ? 36 : 30, x: X(0), y: Y(0), ls: -0.01, shadow: true }),
+        T({ role: 'body', text: HANDLE, weight: 600, size: v ? 36 : 30, align: 'right', x: X(1), y: Y(0), ls: -0.01, shadow: true }),
+        T({ role: 'title', text: 'Perdí mi', font: 'serif', weight: 500, size: v ? 120 : 96, align: 'center', x: X(0.5), y: Y(v ? 0.56 : 0.42), ls: -0.02, shadow: true }),
+        T({ role: 'accent', text: 'miedo', font: 'serif', weight: 700, italic: true, size: v ? 330 : 250, align: 'center', x: X(0.5), y: Y(v ? 0.63 : 0.53), maxW: S.w, ls: 0, lh: 1, shadow: true }),
+        T({ role: 'body', text: 'Invertir también\nes un hábito', weight: 600, size: v ? 36 : 30, x: X(0), y: Y(0.92), lh: 1.1, ls: -0.01, shadow: true }),
+      ];
+    },
+  },
+  {
+    id: 'lados', name: 'Titular + laterales', ref: 'Titular gigante detrás de la persona y textos a los lados (P49)', palette: 'solid', pal: 'crema-rojo',
+    bg: { photo: 'cutout', fit: 'height', anchor: 'bottom', zoom: 0.82, offX: 0, offY: 0.06, darken: 0, outline: false },
+    layers: (W, H, X, Y, S) => {
+      const v = H > W;
+      return [
+        T({ role: 'body', text: 'TRADING', weight: 700, size: v ? 34 : 30, x: X(0), y: Y(0), ls: 0.02 }),
+        T({ role: 'body', text: HANDLE, weight: 700, size: v ? 34 : 30, align: 'center', x: X(0.5), y: Y(0), ls: 0.02 }),
+        T({ role: 'body', text: 'ESTRATEGIA', weight: 700, size: v ? 34 : 30, align: 'right', x: X(1), y: Y(0), ls: 0.02 }),
+        T({ role: 'accent', text: 'ESTRATEGIA', size: v ? 230 : 210, align: 'center', x: X(0.5), y: Y(0.04), maxW: S.w * 1.02, ls: -0.06, lh: 0.88, behind: true }),
+        T({ role: 'body', text: 'No va de\n*acertar*.\nVa de\n*gestionar*.', weight: 500, size: v ? 46 : 38, x: X(0), y: Y(v ? 0.42 : 0.36), lh: 1.05, ls: -0.02, maxW: S.w * 0.3 }),
+        T({ role: 'body', text: 'Cada\noperación\ntiene un\n*plan*.', weight: 500, size: v ? 46 : 38, align: 'right', x: X(1), y: Y(v ? 0.42 : 0.36), lh: 1.05, ls: -0.02, maxW: S.w * 0.3 }),
+      ];
+    },
+  },
 ];
 
 const tplById = (id) => THUMB_TEMPLATES.find(t => t.id === id) || THUMB_TEMPLATES[0];
@@ -150,16 +290,29 @@ export function makeThumb(tplId = 'webinar', format = '9x16', palId = null) {
   const S = safeOf(format);
   const X = (f) => S.x + f * S.w, Y = (f) => S.y + f * S.h;
   const th = { v: 2, tpl: tpl.id, format, pal: palId || tpl.pal, bg: { ...tpl.bg, color: C.n900 }, layers: tpl.layers(W, H, X, Y, S) };
-  // "Texto detrás": el titular se coloca para que la cabeza lo tape en parte
-  if (tpl.id === 'detras') {
-    const top = personTop(th, W, H);
-    const title = th.layers.find(l => l.behind);
-    if (top !== null && title) {
-      const fs = (title.size || 200) * Math.min(W, H) / 1080;
-      title.y = clamp((top + fs * 0.45) / H - (fs * 0.86) / H, S.y, S.y + S.h * 0.6);
-    }
-  }
+  placeBehind(th, W, H);
   return applyPalette(th, th.pal);
+}
+
+/**
+ * Titular "detrás de la persona": lo primero es que se lea. Se coloca para que la cabeza tape solo
+ * el borde de abajo; si no cabe encima de la cabeza, pasa delante de la persona.
+ */
+function placeBehind(th, W, H) {
+  const S = safeOf(th.format);
+  const title = th.layers.filter(l => l.kind === 'text' && (l.behind || l.behindAuto) && l.alpha == null)
+    .sort((a, b) => (b.size || 0) - (a.size || 0))[0];
+  if (!title) return;
+  title.behindAuto = true;
+  const top = personTop(th, W, H);
+  if (top === null) { title.behind = true; return; }
+  const fs = (title.size || 200) * Math.min(W, H) / 1080;
+  const n = String(title.text || '').split('\n').length;
+  const h = fs * (title.lh || 1) * n;
+  const y = (top + fs * 0.15 - h) / H;
+  if (y < S.y) { title.behind = false; return; }   // sin sitio encima de la cabeza: delante y legible
+  title.behind = true;
+  title.y = Math.min(y, S.y + S.h * 0.6);
 }
 export const defaultThumb = () => makeThumb('webinar', '9x16');
 
@@ -174,6 +327,9 @@ function applyPalette(th, palId) {
     else if (l.role === 'onPhoto') { n.color = C.white; n.accent = P.bg && P.bg !== C.n900 ? P.bg : C.fluor; }
     else { n.color = P[l.role] || P.body; n.accent = P.accent; }
     if (l.kind === 'icons') n.ring = tpl.palette === 'photo' ? C.n900 : P.title;
+    if (l.kind === 'pill' && l.filled) n.ink = P.bg || C.n900;
+    // fondo liso con persona recortada: contorno del color del fondo para que el texto no se pierda sobre la persona
+    if (l.kind === 'text' && P.bg && th.bg.photo === 'cutout' && l.role !== 'onPhoto') n.halo = P.bg;
     return n;
   });
   return th;
@@ -181,6 +337,7 @@ function applyPalette(th, palId) {
 
 // ---------- Dibujo ----------
 const rt = { photo: null, mask: null, key: null, boxes: [] };
+export const thumbRuntime = rt; // pruebas automáticas
 
 function segmentsOf(line) {
   // *palabra* = color de acento
@@ -202,6 +359,14 @@ function textLayer(ctx, l, W, H, u) {
   const h = lh * lines.length;
   const x0 = l.x * W, y0 = l.y * H;
   const left = l.align === 'center' ? x0 - w / 2 : l.align === 'right' ? x0 - w : x0;
+  ctx.save();
+  if (l.alpha != null) ctx.globalAlpha *= l.alpha;
+  // marco discontinuo alrededor del texto (tipo caja de selección)
+  if (l.frame === 'dashed') {
+    const px = fs * 0.7, py = fs * 0.5;
+    ctx.save(); ctx.setLineDash([fs * 0.22, fs * 0.16]); ctx.lineWidth = Math.max(2, fs * 0.06); ctx.strokeStyle = l.color || C.white;
+    rrect(ctx, left - px, y0 - py * 0.6, w + px * 2, h + py * 1.2, fs * 0.5); ctx.stroke(); ctx.restore();
+  }
   ctx.font = font(); ctx.letterSpacing = `${(l.ls || 0) * fs}px`; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
   lines.forEach((line, i) => {
     const lw = measure(line);
@@ -217,12 +382,16 @@ function textLayer(ctx, l, W, H, u) {
       ctx.save();
       if (l.shadow) { ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = fs * 0.22; ctx.shadowOffsetY = fs * 0.04; }
       if (l.stroke) { ctx.lineJoin = 'round'; ctx.lineWidth = fs * 0.08; ctx.strokeStyle = l.stroke; ctx.strokeText(sg.t, x, base); }
+      if (l.halo && !l.behind) { ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(4, fs * 0.12); ctx.strokeStyle = l.halo; ctx.strokeText(sg.t, x, base); ctx.restore(); }
       ctx.fillStyle = sg.acc ? (l.accent || C.fluor) : (l.color || C.white);
+      // "grosor": engorda las letras finas (manuscrita) para que se lean en pequeño
+      if (l.thick) { ctx.lineJoin = 'round'; ctx.lineWidth = fs * l.thick; ctx.strokeStyle = ctx.fillStyle; ctx.strokeText(sg.t, x, base); ctx.shadowColor = 'transparent'; }
       ctx.fillText(sg.t, x, base);
       ctx.restore();
       x += ctx.measureText(sg.t).width;
     }
   });
+  ctx.restore();
   ctx.letterSpacing = '0px';
   return { x: left, y: y0, w, h };
 }
@@ -258,6 +427,17 @@ function iconsLayer(ctx, l, W, H, u) {
     drawIcon(ctx, k, cx - R * 0.55, cy - R * 0.55, R * 1.1, ['fluor', 'white'].includes(l.tones?.[i]) ? C.n900 : C.white, 2);
   });
   return { x, y, w: n ? d + (n - 1) * step : d, h: d };
+}
+
+// Círculo fino (marco de revista). x/y = centro
+function ringLayer(ctx, l, W, H, u) {
+  const r = (l.size || 380) * u, cx = l.x * W, cy = l.y * H;
+  ctx.save();
+  if (l.alpha != null) ctx.globalAlpha *= l.alpha;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.lineWidth = Math.max(1.5, (l.width || 2.5) * u); ctx.strokeStyle = l.color || C.white; ctx.stroke();
+  ctx.restore();
+  return { x: cx - r, y: cy - r, w: r * 2, h: r * 2 };
 }
 
 function logoLayer(ctx, l, W, H, u) {
@@ -347,6 +527,7 @@ export function drawThumb(ctx, W, H, th) {
     else if (l.kind === 'pill') bx = pillLayer(ctx, l, W, H, u);
     else if (l.kind === 'icons') bx = iconsLayer(ctx, l, W, H, u);
     else if (l.kind === 'logo') bx = logoLayer(ctx, l, W, H, u);
+    else if (l.kind === 'ring') bx = ringLayer(ctx, l, W, H, u);
     if (bx) boxes.push({ id: l.id, ...bx });
   };
   th.layers.filter(l => l.behind).forEach(drawL);
@@ -368,11 +549,11 @@ async function captureForThumb() {
     catch (e) { console.warn(e); rt.mask = null; toast('No se pudo recortar a la persona', 'err'); }
     rt.key = Date.now();
     const cur = curThumb();
-    // con la plantilla "Texto detrás", el titular se recoloca detrás de la nueva cabeza
-    const fresh = cur.tpl === 'detras' ? makeThumb('detras', cur.format, cur.pal) : null;
+    // el titular "detrás de la persona" se recoloca según la nueva cabeza (sin taparlo)
     update(pp => {
-      const th = { ...cur, frameT: timeBus.t };
-      if (fresh) th.layers = cur.layers.map(l => (l.behind ? { ...l, y: fresh.layers.find(f => f.behind)?.y ?? l.y } : l));
+      const th = { ...structuredClone(cur), frameT: timeBus.t };
+      const [W, H] = TF[th.format] || TF['9x16'];
+      placeBehind(th, W, H);
       pp.thumb = th;
     }, { history: false });
     previewCache.clear();
@@ -502,7 +683,7 @@ function tplPreview(tpl, format) {
   return url;
 }
 
-const LAYER_NAMES = { text: 'Texto', pill: 'Etiqueta', icons: 'Iconos', logo: 'Logo TBS' };
+const LAYER_NAMES = { text: 'Texto', pill: 'Etiqueta', icons: 'Iconos', logo: 'Logo TBS', ring: 'Círculo' };
 const layerLabel = (l) => (l.kind === 'text' || l.kind === 'pill' ? String(l.text || '').replace(/\*/g, '').split('\n')[0].slice(0, 26) || LAYER_NAMES[l.kind] : LAYER_NAMES[l.kind]);
 
 function LayerProps({ l }) {
@@ -535,7 +716,15 @@ function LayerProps({ l }) {
       <${Toggle} label="Sombra" value=${!!l.shadow} onChange=${set('shadow')} />
       <${Toggle} label="Fondo por línea" value=${!!l.box} onChange=${set('box')} />
       ${l.box && html`<${Swatches} label="Color del fondo" value=${l.boxColor} onChange=${set('boxColor')} />`}
+      <${Slider} label="Grosor extra (letras finas)" value=${l.thick || 0} min=${0} max=${0.06} step=${0.005} format=${v => Math.round(v * 1000) / 10 + '%'} onInput=${set('thick')} />
+      <${Toggle} label="Marco discontinuo" value=${l.frame === 'dashed'} onChange=${v => set('frame')(v ? 'dashed' : '')} />
+      <${Slider} label="Opacidad" value=${l.alpha ?? 1} min=${0.1} max=${1} step=${0.01} format=${v => Math.round(v * 100) + '%'} onInput=${set('alpha')} />
       <${Toggle} label="Detrás de la persona" sub="Necesita una foto con persona" value=${!!l.behind} onChange=${set('behind')} />`}
+    ${l.kind === 'ring' && html`
+      <${Slider} label="Radio" value=${l.size} min=${60} max=${800} step=${1} format=${v => Math.round(v) + ' px'} onInput=${set('size')} />
+      <${Slider} label="Grosor" value=${l.width ?? 2.5} min=${1} max=${16} step=${0.5} format=${v => v + ' px'} onInput=${set('width')} />
+      <${Swatches} label="Color" value=${l.color} onChange=${set('color')} />
+      <${Toggle} label="Detrás de la persona" value=${!!l.behind} onChange=${set('behind')} />`}
     ${l.kind === 'pill' && html`
       <${Slider} label="Tamaño" value=${l.size} min=${20} max=${160} step=${1} format=${v => Math.round(v) + ' px'} onInput=${set('size')} />
       <${Swatches} label="Color" value=${l.color} onChange=${set('color')} />
@@ -618,7 +807,7 @@ export function ThumbPanel() {
       <${Section} title="Capas" right=${html`<span class="dim small">clic en la portada para elegir</span>`}>
         <div class="stack">
           <div class="layer-list">${[...th.layers].reverse().map(l => html`<button class=${'layer-row' + (l.id === selLayer ? ' on' : '')} onClick=${() => { selLayer = l.id; emit(); }}>
-            <${Icon} name=${{ text: 'type', pill: 'textBox', icons: 'sparkles', logo: 'shield' }[l.kind]} /><span>${layerLabel(l)}</span>${l.behind && html`<small>detrás</small>`}</button>`)}</div>
+            <${Icon} name=${{ text: 'type', pill: 'textBox', icons: 'sparkles', logo: 'shield', ring: 'target' }[l.kind] || 'type'} /><span>${layerLabel(l)}</span>${l.behind && html`<small>detrás</small>`}</button>`)}</div>
           <div class="row wrap" style="gap:4px">
             <${Btn} cls="sm" icon="plus" onClick=${() => addLayer(T({ role: 'title', text: 'Nuevo texto', size: 110, x: 0.5, y: 0.45, align: 'center', color: P.title, accent: P.accent, shadow: tpl.palette === 'photo' }))}>Texto</${Btn}>
             <${Btn} cls="sm" icon="plus" onClick=${() => addLayer({ id: uid('l'), kind: 'pill', role: 'title', text: 'Etiqueta', icon: 'video', size: 50, x: 0.06, y: 0.05, color: P.title })}>Etiqueta</${Btn}>

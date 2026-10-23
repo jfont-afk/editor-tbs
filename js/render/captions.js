@@ -58,6 +58,10 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
   const heroOn = st.heroMode && st.heroMode !== 'off';
   const heroItems = heroOn ? g.items.filter(x => x.w.hl === 2) : [];
   const src = heroItems.length ? g.items.filter(x => x.w.hl !== 2) : g.items;
+  // "Subtítulo + título": lo que se dice antes del título va encima y lo de después, debajo (se lee en orden)
+  const split = heroItems.length && st.heroMode === 'stack';
+  const heroPos = heroItems.length ? g.items.indexOf(heroItems[0]) : -1;
+  const segOf = (it) => (split && g.items.indexOf(it) > heroPos ? 1 : 0);
   // Jerarquía sin destacados: se amplía la palabra más relevante del bloque
   let autoBig = -1;
   if (st.layout === 'hier' && !src.some(x => x.w.hl)) {
@@ -78,7 +82,7 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
       const m = ctx.measureText(text);
       const vm = vmetrics(ctx, font);
       // tinta real de la palabra (para apilar el título pegado al texto, sin huecos)
-      return { it, i, wf, size, font, text, w: m.width, inkDesc: m.actualBoundingBoxDescent, big: wf.scale > 1.3, level: i === autoBig ? 1 : (it.w.hl | 0), ...vm };
+      return { it, i, seg: segOf(it), wf, size, font, text, w: m.width, inkDesc: m.actualBoundingBoxDescent, big: wf.scale > 1.3, level: i === autoBig ? 1 : (it.w.hl | 0), ...vm };
     });
     ctx.letterSpacing = '0px';
     ctx.font = fontStr(st.font, fs);
@@ -88,27 +92,27 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
     if (st.layout === 'stack') {
       let cur = null;
       for (const x of items) {
-        if (cur && !x.it.w.nl && cur.items.length === 1 && cur.items[0].text.length <= 2 && cur.w + space + x.w <= maxW) { cur.items.push(x); cur.w += space + x.w; continue; }
+        if (cur && !x.it.w.nl && x.seg === cur.items[0].seg && cur.items.length === 1 && cur.items[0].text.length <= 2 && cur.w + space + x.w <= maxW) { cur.items.push(x); cur.w += space + x.w; continue; }
         cur = { items: [x], w: x.w }; lines.push(cur);
       }
     } else if (st.layout === 'hier') {
       // palabras grandes en su propia línea; las pequeñas se agrupan
       for (const x of items) {
         const last = lines[lines.length - 1];
-        if (x.big || !last || last.big || x.it.w.nl || last.w + space + x.w > maxW * 0.8) lines.push({ items: [x], w: x.w, big: x.big });
+        if (x.big || !last || last.big || x.it.w.nl || x.seg !== last.items[last.items.length - 1].seg || last.w + space + x.w > maxW * 0.8) lines.push({ items: [x], w: x.w, big: x.big });
         else push(x);
       }
     } else {
       let cur = { items: [], w: 0 };
       for (const x of items) {
         const add = cur.items.length ? space + x.w : x.w;
-        if (cur.items.length && (x.it.w.nl || cur.w + add > maxW)) { lines.push(cur); cur = { items: [x], w: x.w }; }
+        if (cur.items.length && (x.it.w.nl || x.seg !== cur.items[cur.items.length - 1].seg || cur.w + add > maxW)) { lines.push(cur); cur = { items: [x], w: x.w }; }
         else { cur.items.push(x); cur.w += add; }
       }
       if (cur.items.length) lines.push(cur);
     }
     // Escalonado: siempre en dos líneas si hay al menos dos palabras
-    if (st.layout === 'stagger' && !forced && lines.length === 1 && items.length >= 2) {
+    if (st.layout === 'stagger' && !forced && !split && lines.length === 1 && items.length >= 2) {
       const half = Math.ceil(items.length / 2);
       const a = items.slice(0, half), b = items.slice(half);
       const wsum = (arr) => arr.reduce((s, x) => s + x.w, 0) + space * (arr.length - 1);
@@ -116,7 +120,8 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
     }
     for (const l of lines) l.space = space;
     const tooWide = lines.some(l => l.w > maxW + 0.5);
-    const limit = Math.max(st.layout === 'hier' || st.layout === 'stack' ? Math.max(maxLines, 4) : maxLines, forced + 1);
+    const segs = new Set(items.map(x => x.seg)).size;
+    const limit = Math.max(st.layout === 'hier' || st.layout === 'stack' ? Math.max(maxLines, 4) : maxLines, forced + 1) + segs - 1;
     if (lines.length <= limit && !tooWide) break;
     fs *= 0.9;
   }
@@ -142,15 +147,19 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
   const area0 = st.freePos ? { x: W * 0.04, y: 0, w: W * 0.92, h: H } : safe;
   const hero = heroItems.length ? layoutHero(ctx, heroItems, st, env, area0) : null;
   const nbh = bh; // alto del subtítulo normal
-  // "Subtítulo + título": el título se apoya justo bajo la tinta de la última línea (no bajo su interlineado)
-  let gap = 0;
-  if (hero && st.heroMode === 'stack' && lines.length) {
-    const last = lines[lines.length - 1];
-    const inkBottom = nbh - last.h / 2 + last.asc / 2 + Math.max(0, ...last.items.map(x => x.inkDesc || 0));
-    gap = Math.max(fs, ...last.items.map(x => x.size)) * 0.16 - (nbh - inkBottom);
-  }
-  if (hero && st.heroMode === 'stack') { bh += gap + hero.h; bw = Math.max(bw, hero.w); }
-  else if (hero) { bw = Math.max(bw, hero.w); bh = Math.max(bh, hero.h); }
+  // Bloques encima y debajo del título. El título se apoya en la TINTA de las letras (no en el interlineado);
+  // heroGap (en tamaños de letra del subtítulo) puede ser negativo para que se monten, como en las portadas
+  const pre = lines.filter(l => !l.items[0].seg), post = lines.filter(l => l.items[0].seg);
+  const sumH = (arr) => arr.reduce((a2, l) => a2 + l.h, 0);
+  const inkDesc = (l) => Math.max(0, ...l.items.map(x => x.inkDesc || 0));
+  const lineFs = (l) => Math.max(...l.items.map(x => x.size));
+  let gapA = 0, gapB = 0;
+  if (hero && st.heroMode === 'stack') {
+    if (pre.length) { const l = pre[pre.length - 1]; gapA = lineFs(l) * (st.heroGap ?? 0.16) - (l.h / 2 - l.asc / 2 - inkDesc(l)); }
+    if (post.length) { const l = post[0]; gapB = lineFs(l) * (st.heroGapBelow ?? st.heroGap ?? 0.16) - (l.h / 2 - l.asc / 2); }
+    bh = sumH(pre) + gapA + hero.h + gapB + sumH(post);
+    bw = Math.max(bw, hero.w);
+  } else if (hero) { bw = Math.max(bw, hero.w); bh = Math.max(bh, hero.h); }
   // Escalonado: líneas desplazadas a izquierda y derecha
   if (st.layout === 'stagger' && lines.length > 1) {
     const off = Math.min(W * 0.07, (maxW - bw) / 2 + W * 0.04);
@@ -170,20 +179,30 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
   const left = area.x + padX, right = area.x + area.w - padX;
   if (cx - bw / 2 < left) cx = left + bw / 2;
   if (cx + bw / 2 > right) cx = Math.max(left + bw / 2, right - bw / 2);
-  // en "título solo" el subtítulo y el título comparten centro; en "subtítulo + título", el título va debajo
-  let y = hero && st.heroMode !== 'stack' ? cy - nbh / 2 : cy - bh / 2;
-  for (const l of lines) {
-    l.cy = y + l.h / 2;
-    l.base = l.cy + l.asc / 2;
-    let x = st.align === 'left' ? cx - bw / 2 : st.align === 'right' ? cx + bw / 2 - l.w : cx - l.w / 2;
-    x += l.shift || 0;
-    l.x0 = x;
-    for (const it of l.items) { it.x = x; it.cx = x + it.w / 2; it.base = l.base; it.line = l; x += it.w + l.space; }
-    y += l.h;
-  }
-  if (hero) {
-    const top = st.heroMode === 'stack' ? (lines.length ? y + gap : cy - hero.h / 2) : cy - hero.h / 2;
-    placeHero(hero, cx, top, st.align, bw);
+  // alineación de las líneas: respecto al bloque, o al borde del título (texto pequeño en la esquina del título)
+  const la = hero && st.heroAlign ? st.heroAlign : st.align;
+  const placeLines = (arr, y) => {
+    for (const l of arr) {
+      l.cy = y + l.h / 2;
+      l.base = l.cy + l.asc / 2;
+      let x = la === 'left' ? cx - bw / 2 : la === 'right' ? cx + bw / 2 - l.w : cx - l.w / 2;
+      x += l.shift || 0;
+      l.x0 = x;
+      for (const it of l.items) { it.x = x; it.cx = x + it.w / 2; it.base = l.base; it.line = l; x += it.w + l.space; }
+      y += l.h;
+    }
+    return y;
+  };
+  if (hero && st.heroMode === 'stack') {
+    // encima · título · debajo
+    const y0 = cy - bh / 2;
+    const ht = placeLines(pre, y0) + gapA;
+    placeHero(hero, cx, ht, la, bw);
+    placeLines(post, ht + hero.h + gapB);
+  } else {
+    // "título solo" y "título detrás": el subtítulo y el título comparten centro
+    placeLines(lines, hero ? cy - nbh / 2 : cy - bh / 2);
+    if (hero) placeHero(hero, cx, cy - hero.h / 2, la, bw);
   }
   return { fs, lines, items, cx, cy, hero, bx: cx - bw / 2 - padX, by: cy - bh / 2 - padY, bw: bw + padX * 2, bh: bh + padY * 2 };
 }
@@ -200,7 +219,7 @@ function layoutHero(ctx, heroItems, st, env, area) {
   const words = heroItems.map(x => { let t = x.w.text.trim().replace(/[.,;:…]+$/u, ''); t = t.replace(/^[«"“'¿¡(]+|[»"”')]+$/gu, ''); return h.upper ? t.toLocaleUpperCase('es-ES') : t; });
   const ls = h.ls ?? -0.04;
   const measure = (s) => { ctx.font = fontStr(f, 100); ctx.letterSpacing = `${(ls * 100).toFixed(2)}px`; const w = ctx.measureText(s).width; ctx.letterSpacing = '0px'; return w; };
-  const targetW = area.w * 0.94;
+  const targetW = area.w * (h.width ?? 0.94);
   const maxFs = Math.min(300 * u, H * 0.2);
   const options = [[words.join(' ')]];
   for (let k = 1; k < words.length; k++) options.push([words.slice(0, k).join(' '), words.slice(k).join(' ')]);
@@ -227,6 +246,10 @@ function layoutHero(ctx, heroItems, st, env, area) {
   const ink = lines.reduce((a, l) => a + l.asc + l.desc, 0) + lgap * (lines.length - 1) + ul;
   return { lines, fs, font, ls: ls * fs, lh, lgap, cap: vm.cap, w, h: ink, ts: heroItems[0].ts, style: h };
 }
+function heroBox(hero) {
+  const x0 = Math.min(...hero.lines.map(l => l.x)), x1 = Math.max(...hero.lines.map(l => l.x + l.w));
+  return { x: x0, y: hero.top, w: x1 - x0, h: hero.h };
+}
 function placeHero(hero, cx, top, align, blockW) {
   hero.top = top;
   const bw = Math.max(blockW || 0, hero.w);
@@ -248,6 +271,8 @@ function drawHero(ctx, hero, t, st, u) {
   const cx = hero.lines.reduce((a, l) => a + l.x + l.w / 2, 0) / hero.lines.length;
   const cy = hero.top + hero.h / 2;
   ctx.save();
+  // "título detrás": palabra gigante semitransparente detrás del subtítulo
+  if (h.alpha != null) ctx.globalAlpha *= h.alpha;
   // ligero asentamiento de todo el título
   const settle = 1 + 0.06 * (1 - ease.outCubic(clamp(k / 0.6, 0, 1)));
   ctx.translate(cx, cy); ctx.scale(settle, settle); ctx.translate(-cx, -cy);
@@ -303,6 +328,19 @@ function drawHero(ctx, hero, t, st, u) {
       ctx.restore();
     }
   });
+  // tachado: barra que cruza el título de izquierda a derecha
+  if (h.strike) {
+    const p = ease.outExpo(clamp((k - 0.3) / 0.45, 0, 1));
+    if (p > 0) {
+      ctx.save(); ctx.letterSpacing = '0px'; ctx.fillStyle = h.strike;
+      for (const l of hero.lines) {
+        const th = hero.fs * 0.085, ext = hero.fs * 0.06;
+        rrect(ctx, l.x - ext, l.base - hero.fs * 0.27 - th / 2, (l.w + ext * 2) * p, th, th * 0.2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
   // subrayado que se dibuja de izquierda a derecha
   if (h.underline && h.line) {
     const last = hero.lines[hero.lines.length - 1];
@@ -465,6 +503,9 @@ export function drawCaption(ctx, g, t, st, L, env, opts = {}) {
     ctx.restore();
   }
 
+  // el título va debajo del texto cuando están montados (el texto pequeño se lee encima) o en "título detrás"
+  const heroFirst = L.hero && (st.heroMode === 'behind' || (st.heroMode === 'stack' && (st.heroGap ?? 0) < 0));
+  if (heroFirst) drawHero(ctx, L.hero, t, st, u);
   const act = st.active || { mode: 'none' };
   for (const l of L.lines) {
     for (const it of l.items) {
@@ -567,16 +608,24 @@ export function drawCaption(ctx, g, t, st, L, env, opts = {}) {
       } else {
         drawWordText(ctx, it.x, it, color, st, u, opts, glowMul);
       }
+      // tachado de la palabra destacada
+      if (level && st.hl?.strike) {
+        const pr = ease.outExpo(clamp((t - w.ts - 0.08) / 0.35, 0, 1));
+        if (pr > 0) { ctx.save(); ctx.fillStyle = st.hl.strike; const th = it.size * 0.09; rrect(ctx, it.x - it.size * 0.05, it.base - it.size * 0.27 - th / 2, (it.w + it.size * 0.1) * pr, th, th * 0.2); ctx.fill(); ctx.restore(); }
+      }
       ctx.restore();
     }
   }
   ctx.restore();
   // Título (palabras muy destacadas)
-  if (L.hero) drawHero(ctx, L.hero, t, st, u);
-  // Decoración: caja de selección tipo editor
+  if (L.hero && !heroFirst) drawHero(ctx, L.hero, t, st, u);
+  // Decoración: caja de selección tipo editor (alrededor del bloque o solo del título, con cursor)
   if (st.deco === 'select') {
     const pad = 22 * u;
-    const x = L.bx - pad, y = L.by - pad * 0.7, w = L.bw + pad * 2, h = L.bh + pad * 1.4;
+    const hb = L.hero && st.decoTarget === 'hero' ? heroBox(L.hero) : null;
+    if (hb && t < L.hero.ts) { /* la caja aparece con el título */ } else {
+    const r0 = hb || { x: L.bx, y: L.by, w: L.bw, h: L.bh };
+    const x = r0.x - pad, y = r0.y - pad * 0.7, w = r0.w + pad * 2, h = r0.h + pad * 1.4;
     const kk = ease.outCubic(clamp((t - g.start) / 0.45, 0, 1));
     ctx.save();
     ctx.globalAlpha *= kk;
@@ -590,7 +639,16 @@ export function drawCaption(ctx, g, t, st, L, env, opts = {}) {
       ctx.fillStyle = '#ffffff'; ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
       ctx.lineWidth = 2.5 * u; ctx.strokeStyle = st.hl?.color || '#daff0a'; ctx.strokeRect(hx - hs / 2, hy - hs / 2, hs, hs);
     }
+    if (st.cursor) {
+      // puntero de ratón en la esquina inferior derecha
+      const s = 46 * u, px = x + w - s * 0.25, py = y + h - s * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(px, py); ctx.lineTo(px, py + s); ctx.lineTo(px + s * 0.27, py + s * 0.74); ctx.lineTo(px + s * 0.46, py + s * 1.12);
+      ctx.lineTo(px + s * 0.6, py + s * 1.05); ctx.lineTo(px + s * 0.42, py + s * 0.68); ctx.lineTo(px + s * 0.78, py + s * 0.66); ctx.closePath();
+      ctx.fillStyle = '#121214'; ctx.fill(); ctx.lineWidth = 2.5 * u; ctx.strokeStyle = '#ffffff'; ctx.lineJoin = 'round'; ctx.stroke();
+    }
     ctx.restore();
+    }
   }
   ctx.restore();
   ctx.letterSpacing = '0px';

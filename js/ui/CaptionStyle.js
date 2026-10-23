@@ -23,7 +23,7 @@ function writer(scope) {
   };
 }
 
-const WEIGHTS = { [F.head]: [400, 500, 700], [F.body]: [400, 500, 600, 700, 800, 900], [F.serif]: [400, 500, 600, 700, 800, 900], [F.script]: [400], [F.mono]: [400, 500, 700] };
+const WEIGHTS = { [F.head]: [400, 500, 700], [F.body]: [400, 500, 600, 700, 800, 900], [F.serif]: [400, 500, 600, 700, 800, 900] };
 const pct = (v) => Math.round(v * 100) + '%';
 
 function EffectCard({ title, on, onToggle, children }) {
@@ -51,7 +51,7 @@ function TextTab({ st, set, scope }) {
     <${Swatches} label="Color del texto" value=${st.color} onChange=${v => set('color', v)} />
     <div class="sub-title">Palabra destacada <span class="dim small">(1 clic en la palabra · mismo tamaño)</span></div>
     <${Swatches} label="Color" value=${st.hl?.color} onChange=${v => set('hl.color', v)} />
-    <${Select} label="Tipografía" value=${st.hl?.family || ''} options=${[['', 'La misma'], [F.serif, 'Playfair Display itálica'], [F.head, 'Space Grotesk'], [F.body, 'Raleway'], [F.mono, 'Geist Mono']]}
+    <${Select} label="Tipografía" value=${st.hl?.family || ''} options=${[['', 'La misma'], [F.serif, 'Playfair Display itálica'], [F.head, 'Space Grotesk'], [F.body, 'Raleway']]}
       onChange=${v => { set('hl.family', v || undefined); set('hl.style', v === F.serif ? 'italic' : undefined); set('hl.weight', v ? (v === F.serif ? 600 : 700) : undefined); }} />
     <div class="sub-title">Palabra muy destacada <span class="dim small">(2 clics · título a todo el ancho)</span></div>
     <div class="field"><span class="field-label">Cómo aparece</span>
@@ -68,6 +68,15 @@ function TextTab({ st, set, scope }) {
       <button class=${'btn sm' + (st.hero?.glow ? ' on' : '')} onClick=${() => set('hero.glow', !st.hero?.glow)}>Brillo</button>
     </div>
     ${st.hero?.underline && html`<${Swatches} label="Color del subrayado" value=${st.hero?.line} onChange=${v => set('hero.line', v)} />`}
+    <div class="row" style="gap:6px">
+      <button class=${'btn sm' + (st.hero?.strike ? ' on' : '')} onClick=${() => set('hero.strike', st.hero?.strike ? false : '#f22b11')}>Tachado</button>
+    </div>
+    <${Slider} label="Tamaño del título" value=${st.hero?.width ?? 0.94} min=${0.4} max=${1} step=${0.01} format=${pct} onInput=${v => set('hero.width', v)} />
+    ${st.heroMode === 'behind' && html`<${Slider} label="Opacidad del título" value=${st.hero?.alpha ?? 1} min=${0.15} max=${1} step=${0.01} format=${pct} onInput=${v => set('hero.alpha', v)} />`}
+    ${(st.heroMode || 'stack') === 'stack' && html`
+      <${Slider} label="Separación con el texto (negativo = montados)" value=${st.heroGap ?? 0.16} min=${-0.8} max=${0.8} step=${0.01} center format=${v => (v * 100).toFixed(0) + '%'} onInput=${v => { set('heroGap', v); set('heroGapBelow', v); }} />
+      <div class="field"><span class="field-label">Texto pequeño alineado con el título</span>
+        <${Seg} small value=${st.heroAlign || ''} onChange=${v => set('heroAlign', v || '')} options=${[['', 'Como el bloque'], ['left', 'Borde izq.'], ['right', 'Borde der.']]} /></div>`}
     <div class="sub-title">Maquetación</div>
     <${Seg} small value=${st.align} onChange=${v => set('align', v)} options=${[['left', 'Izquierda'], ['center', 'Centro'], ['right', 'Derecha']]} />
     <${Select} value=${st.layout} options=${LAYOUTS.map(l => [l.id, l.name])} onChange=${v => set('layout', v)} />

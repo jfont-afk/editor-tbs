@@ -35,7 +35,9 @@ export function templatePreview(tpl) {
   x.beginPath(); x.ellipse(W / 2, H * 0.9, W * 0.36, H * 0.32, 0, 0, Math.PI * 2); x.fill();
   x.restore();
   // ejemplo con los tres niveles: normal, destacada y muy destacada (título)
-  const sample = tpl.heroMode === 'solo' ? [['invierte', 0], ['con', 0], ['cabeza', 1]] : [['así', 0], ['es', 0], ['como', 0], ['invertimos', 1], ['TBS', 2]];
+  const sample = tpl.heroMode === 'solo' ? [['invierte', 0], ['con', 0], ['cabeza', 1]]
+    : tpl.cat === 'Tipográficas' ? [['el', 0], ['paso', 1], ['obligatorio', 2], ['en', 0], ['tu', 0], ['carrera', 0]]
+    : [['así', 0], ['es', 0], ['como', 0], ['invertimos', 1], ['TBS', 2]];
   const words = sample.map(([text, hl], i) => ({ w: { id: 'p' + i, text, hl }, ts: i * 0.3, te: i * 0.3 + 0.3 }));
   const grp = { id: 'p0', items: words, start: 0, end: 10 };
   const st = resolveStyle({ template: tpl.id, size: 1, upper: 'auto', posY: tpl.posY }, null);
@@ -166,7 +168,7 @@ function Groups() {
         </div>
         ${g.items.some(x => x.w.hl === 2) && html`<div class="g-hero" onClick=${e => e.stopPropagation()}>
           <span>Título</span>
-          ${[['', 'Plantilla'], ['stack', 'Debajo del subtítulo'], ['solo', 'Solo'], ['off', 'Dentro del texto']].map(([k, lb]) => html`<button class=${(g.ov?.heroMode || '') === k ? 'on' : ''} onClick=${() => A.setGroupStyle(g.id, { heroMode: k || null })}>${lb}</button>`)}
+          ${[['', 'Plantilla'], ['stack', 'Debajo del subtítulo'], ['solo', 'Solo'], ['behind', 'Detrás'], ['off', 'Dentro del texto']].map(([k, lb]) => html`<button class=${(g.ov?.heroMode || '') === k ? 'on' : ''} onClick=${() => A.setGroupStyle(g.id, { heroMode: k || null })}>${lb}</button>`)}
         </div>`}
       </div>`;
     })}

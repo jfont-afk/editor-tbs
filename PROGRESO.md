@@ -97,3 +97,12 @@ Se abre con **Abrir Editor.bat** → servidor local en `http://localhost:5179` �
 - [x] Arreglado: icono de "Elegir archivos" (se pintaba como recuadro blanco). Contenido de los paneles limitado a 720 px para que los botones no se estiren. Vistas previas de plantillas y motions sobre fondo neutro.
 - [x] Gancho nativo: más arriba (17 %) y con contorno oscuro para leerse sobre fondos claros. Legibilidad automática de subtítulos reforzada (contorno suave + umbral más sensible).
 - [x] Probado con el vídeo nuevo del usuario (_pruebas/usuario2.mp4, 4K HEVC 8 s): transcripción, tomas repetidas (detecta las 2 repeticiones), encuadre de cabeza, subtítulos, motions y exportación. 0 errores en consola.
+
+## Ronda 8 — web con cuentas, plantillas de Pinterest y legibilidad
+- [x] **Versión web en Cloudflare** (`worker/`): inicio de sesión con correo y contraseña, invitaciones de un solo uso (editor o administrador), panel `/admin`, cambio de contraseña (`/cuenta`) y **proyectos guardados por cuenta** (D1). Los vídeos no se suben. Primera cuenta con la clave `SETUP_KEY`.
+- [x] Arranque robusto: librerías principales dentro del repositorio (`js/vendor`) y pantalla de error explicada si algo bloquea la carga.
+- [x] **Subtítulos**: arreglado el hueco enorme encima de la palabra muy destacada (se apoya en la tinta real de las letras). Lo dicho antes del título va encima y lo de después, debajo.
+- [x] **8 plantillas tipográficas nuevas** a partir de las referencias elegidas (S01, S04, S06, S14, S24, S28, S32, S48): Collage, Superpuesto, Tachado, Esquina, Selección, Revista, Cinemático y Serif grande. Impacto y Cine serif se rehacen con S27 y S08. Unificadas: Íntimo → Editorial y Documental → Minimal.
+- [x] **10 portadas nuevas** (P02, P03, P05, P06, P13, P20, P30, P31, P47, P49): Etiqueta + serif, Una palabra, Título detrás, Corchetes, Revista serif, Bloque, Itálica cruzada, Portada de revista, Serif + itálica y Titular + laterales.
+- [x] **Legibilidad primero** en las portadas: el titular "detrás de la persona" solo deja que la cabeza tape el borde de abajo (si no cabe, pasa delante); contorno del color del fondo sobre la persona recortada; textos pequeños más grandes y con sombra; sin líneas montadas.
+- [x] **Solo tres tipografías**: Playfair Display, Raleway y Space Grotesk (fuera la manuscrita y la monoespaciada; lo antiguo se ve con estas).

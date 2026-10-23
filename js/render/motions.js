@@ -325,7 +325,7 @@ export const MOTIONS = {
   tituloglow: {
     name: 'Título glow', cat: 'cartel', icon: 'zap', dur: 3, y: 0.28, animIn: 'focus', animOut: 'fade',
     props: { text: 'CAMBIO EN INSTAGRAM', script: 'nuevo', color: 'fluor', behindHint: true },
-    fields: [{ k: 'text', label: 'Título', type: 'textarea' }, { k: 'script', label: 'Palabra script', type: 'text' }, { k: 'color', label: 'Color', type: 'color' }],
+    fields: [{ k: 'text', label: 'Título', type: 'textarea' }, { k: 'script', label: 'Palabra en itálica', type: 'text' }, { k: 'color', label: 'Color', type: 'color' }],
     draw(ctx, o, lt, env) {
       const { u } = env; const P = o.props;
       const col = hexOf(P.color);
@@ -348,7 +348,7 @@ export const MOTIONS = {
       if (P.script) {
         const k = ease.outCubic(clamp((lt - 0.25) / 0.5, 0, 1));
         ctx.save(); ctx.globalAlpha *= k;
-        const sf = font(400, fs * 0.72, F.script);
+        const sf = font(600, fs * 0.72, F.serif, true);
         ctx.shadowColor = 'rgba(255,255,255,0.6)'; ctx.shadowBlur = 20 * u;
         text(ctx, P.script, -mw * 0.22, -h / 2 + fs * 0.05, sf, C.white, 'center');
         ctx.restore();
@@ -510,13 +510,13 @@ export const MOTIONS = {
   texto: {
     name: 'Texto libre', cat: 'cartel', icon: 'type', dur: 3, y: 0.4, animIn: 'pop', animOut: 'fade',
     props: { text: 'Escribe *aquí*', font: 'head', size: 80, color: 'white', accent: 'fluor', upper: true, box: 'none', align: 'center', shadow: true, ls: -0.02 },
-    fields: [{ k: 'text', label: 'Texto (*palabra* = color de acento)', type: 'textarea' }, { k: 'accent', label: 'Color de acento', type: 'color' }, { k: 'font', label: 'Tipografía', type: 'select', options: [['head', 'Space Grotesk'], ['body', 'Raleway'], ['serif', 'Playfair Display (itálica)'], ['script', 'Sacramento'], ['mono', 'Geist Mono']] }, { k: 'size', label: 'Tamaño', type: 'range', min: 24, max: 260, step: 1 }, { k: 'color', label: 'Color', type: 'color' }, { k: 'upper', label: 'Mayúsculas', type: 'toggle' }, { k: 'align', label: 'Alineación', type: 'select', options: [['left', 'Izquierda'], ['center', 'Centro'], ['right', 'Derecha']] }, { k: 'ls', label: 'Interletrado', type: 'range', min: -0.1, max: 0.3, step: 0.005 }, { k: 'shadow', label: 'Sombra', type: 'toggle' }, { k: 'box', label: 'Fondo', type: 'select', options: [['none', 'Sin fondo'], ['glass', 'Cristal'], ['dark', 'Oscuro'], ['fluor', 'Fluor'], ['magenta', 'Magenta'], ['white', 'Blanco']] }],
+    fields: [{ k: 'text', label: 'Texto (*palabra* = color de acento)', type: 'textarea' }, { k: 'accent', label: 'Color de acento', type: 'color' }, { k: 'font', label: 'Tipografía', type: 'select', options: [['head', 'Space Grotesk'], ['body', 'Raleway'], ['serif', 'Playfair Display (itálica)']] }, { k: 'size', label: 'Tamaño', type: 'range', min: 24, max: 260, step: 1 }, { k: 'color', label: 'Color', type: 'color' }, { k: 'upper', label: 'Mayúsculas', type: 'toggle' }, { k: 'align', label: 'Alineación', type: 'select', options: [['left', 'Izquierda'], ['center', 'Centro'], ['right', 'Derecha']] }, { k: 'ls', label: 'Interletrado', type: 'range', min: -0.1, max: 0.3, step: 0.005 }, { k: 'shadow', label: 'Sombra', type: 'toggle' }, { k: 'box', label: 'Fondo', type: 'select', options: [['none', 'Sin fondo'], ['glass', 'Cristal'], ['dark', 'Oscuro'], ['fluor', 'Fluor'], ['magenta', 'Magenta'], ['white', 'Blanco']] }],
     draw(ctx, o, lt, env) {
       const { u } = env; const P = o.props;
       const fam = { head: F.head, body: F.body, serif: F.serif, script: F.script, mono: F.mono }[P.font] || F.head;
-      const w8 = P.font === 'script' ? 400 : P.font === 'serif' ? 600 : P.font === 'mono' ? 500 : 700;
+      const w8 = P.font === 'serif' || P.font === 'script' ? 600 : 700;
       const fs = (P.size || 80) * u;
-      const f = font(w8, fs, fam, P.font === 'serif');
+      const f = font(w8, fs, fam, P.font === 'serif' || P.font === 'script');
       const ls = (P.ls ?? (P.font === 'head' ? -0.02 : 0)) * fs;
       const lines = String(P.text || '').split('\n').map(l => P.upper ? l.toLocaleUpperCase('es-ES') : l);
       const lh = fs * 1.08;

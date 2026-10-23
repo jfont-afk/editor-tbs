@@ -32,16 +32,16 @@ export const F = {
   head: 'Space Grotesk',     // titulares, mayúsculas, 700
   body: 'Raleway',           // cuerpo, botones, títulos de curso (800)
   serif: 'Playfair Display', // acentos editoriales en itálica
-  script: 'Sacramento',      // palabra script
-  mono: 'Geist Mono',
+  // Solo se usan las tres tipografías TBS. Los proyectos antiguos con la manuscrita o la monoespaciada
+  // se ven ahora en Playfair Display y Space Grotesk.
+  script: 'Playfair Display',
+  mono: 'Space Grotesk',
 };
 
 export const FONT_CHOICES = [
   { id: 'head', label: 'Space Grotesk', family: F.head },
   { id: 'body', label: 'Raleway', family: F.body },
   { id: 'serif', label: 'Playfair Display', family: F.serif },
-  { id: 'script', label: 'Sacramento', family: F.script },
-  { id: 'mono', label: 'Geist Mono', family: F.mono },
 ];
 
 export async function loadFonts() {
@@ -51,8 +51,6 @@ export async function loadFonts() {
     `italic 700 40px "${F.body}"`,
     `italic 400 40px "${F.serif}"`, `italic 500 40px "${F.serif}"`, `italic 600 40px "${F.serif}"`, `italic 700 40px "${F.serif}"`, `italic 800 40px "${F.serif}"`,
     `700 40px "${F.serif}"`,
-    `400 40px "${F.script}"`,
-    `400 40px "${F.mono}"`, `500 40px "${F.mono}"`, `700 40px "${F.mono}"`,
   ];
   try {
     await Promise.race([
