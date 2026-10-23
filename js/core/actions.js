@@ -327,6 +327,20 @@ export function updateClip(id, patch, key) {
   if (patch && patch.speed !== undefined) player.seek(Math.min(timeBus.t, player.duration));
 }
 
+// ---------- Corrección de audio (fx) ----------
+export function setClipFx(id, patch, key) {
+  updateClip(id, c => ({ fx: { ...(c.fx || {}), ...patch } }), key && 'fx' + key + id);
+}
+export function setAudioFx(id, patch, key) {
+  updateAudio(id, c => ({ fx: { ...(c.fx || {}), ...patch } }), key && 'afx' + key + id);
+}
+// Los mismos ajustes (sin los fundidos, que son de cada clip) en todos los clips del vídeo
+export function applyFxToAllClips(fx) {
+  const { fadeIn, fadeOut, duck, ...rest } = fx || {};
+  update(p => { for (const c of p.clips) c.fx = { ...(c.fx || {}), ...rest }; });
+  toast('Ajustes de audio aplicados a todos los clips');
+}
+
 // Copia del clip justo detrás del original, o en la posición "toIndex" (Alt + arrastrar)
 export function duplicateClip(id, toIndex) {
   const nid = uid('c');

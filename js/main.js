@@ -48,7 +48,7 @@ window.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
   // con la pantalla de proyectos o una tarea en marcha, los atajos del editor no actúan
-  if (state.ui.home || state.ui.busy) return;
+  if (state.ui.home || state.ui.busy || state.ui.tour != null) return;
   const k = e.key.toLowerCase();
   const fps = state.project.fps || 30;
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); player.seek(timeBus.t); return; }

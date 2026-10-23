@@ -11,6 +11,7 @@ import { captionGroups } from '../core/captions.js';
 import { clipStart, clipDur } from '../core/timeline.js';
 import { player, timeBus } from '../engine/player.js';
 import { CaptionStyleEditor } from './CaptionStyle.js';
+import { AudioFixes } from './AudioFx.js';
 
 const OV_ANIMS = [['none', 'Ninguna'], ['fade', 'Fundido'], ['pop', 'Pop'], ['bounce', 'Rebote'], ['soft', 'Suave'], ['lift', 'Subir'], ['drop', 'Caer'], ['focus', 'Enfoque'], ['slideL', 'Desde la izquierda'], ['slideR', 'Desde la derecha'], ['slideUp', 'Desde abajo'], ['zoom', 'Zoom']];
 
@@ -100,6 +101,9 @@ function ClipInspector({ c }) {
       </${Section}>
       <${Section} title="Audio">
         <${Slider} label="Volumen" value=${c.volume ?? 1} min=${0} max=${1} step=${0.01} format=${v => Math.round(v * 100) + '%'} onInput=${v => A.updateClip(c.id, { volume: v }, 'v' + c.id)} />
+      </${Section}>
+      <${Section} title="Corrección de audio">
+        <${AudioFixes} fx=${c.fx} set=${(patch, key) => A.setClipFx(c.id, patch, key)} applyAll=${state.project.clips.length > 1 ? () => A.applyFxToAllClips(c.fx) : null} />
       </${Section}>
       <${Section} title="Color">
         <${Btn} cls="sm block" icon="palette" onClick=${() => setUI({ tab: 'color' })}>${c.color ? 'Editar el color de este clip' : 'Usa el color general · cambiar'}</${Btn}>
@@ -300,6 +304,10 @@ function AudioInspector({ a }) {
       </${Section}>
       <${Section} title="Volumen">
         <${Slider} label="Volumen" value=${a.volume ?? 1} min=${0} max=${1.5} step=${0.01} format=${v => Math.round(v * 100) + '%'} onInput=${v => A.updateAudio(a.id, { volume: v }, 'auv' + a.id)} />
+      </${Section}>
+      <${Section} title="Corrección de audio">
+        <div class="dim small" style="margin-bottom:8px">Si es tu voz (micro externo, voz en off), usa <b>Voz clara</b>. Si es música, <b>Bajar mientras se habla</b> la deja por debajo de la voz.</div>
+        <${AudioFixes} track fx=${a.fx} set=${(patch, key) => A.setAudioFx(a.id, patch, key)} />
       </${Section}>
       <${Section} title="Tiempo">
         <div class="grid2">

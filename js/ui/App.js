@@ -1,4 +1,4 @@
-import { html, useState } from '../lib.js';
+import { html, useState, useEffect } from '../lib.js';
 import { useStore, setUI, update, undo, redo, canUndo, canRedo, state } from '../core/store.js';
 import { Icon } from './icons.js';
 import { Btn, Progress } from './controls.js';
@@ -21,6 +21,7 @@ import { FORMATS } from '../data/brand.js';
 import * as PF from '../core/projectFolder.js';
 import { folderState } from '../core/projectFolder.js';
 import { AccountMenu } from './Account.js';
+import { Tour, HelpMenu, maybeAutoStart } from './Tour.js';
 
 export const TABS = [
   { id: 'media', name: 'Medios', icon: 'folder', Panel: MediaPanel },
@@ -82,6 +83,7 @@ function TopBar({ s }) {
     <${ProjectMenu} />
     <input class="proj-name" value=${p.name} onChange=${e => update(pp => { pp.name = e.target.value || 'Proyecto sin título'; })} title="Nombre del proyecto" />
     <div class="top-spacer"></div>
+    <${HelpMenu} />
     <${AccountMenu} />
     <${LayoutMenu} />
     <${Btn} cls="icon ghost" icon="undo" title="Deshacer (Ctrl+Z)" disabled=${!canUndo()} onClick=${undo} />
@@ -154,6 +156,7 @@ export function App() {
   const tab = TABS.find(t => t.id === s.ui.tab) || TABS[0];
   const showInsp = s.ui.tab !== 'thumb' && (!!s.ui.sel || ['edit', 'captions', 'motions', 'effects', 'color'].includes(s.ui.tab));
   const fmt = s.ui.tab === 'thumb' ? (s.project.thumb?.format || '9x16') : s.project.format.id;
+  useEffect(maybeAutoStart);
   return html`<div class=${'app fmt-' + fmt + (showInsp ? '' : ' no-insp') + (s.ui.sel ? ' has-sel' : '') + (layout.wideTl ? ' wide-tl' : '')} style=${layoutStyle(fmt)}>
     <${TopBar} s=${s} />
     <${Rail} s=${s} />
@@ -164,6 +167,7 @@ export function App() {
     ${s.ui.home && html`<${Home} />`}
     <${BusyModal} b=${s.ui.busy} />
     ${!s.ui.busy && html`<${RestoreModal} r=${s.ui.restore} />`}
+    ${s.ui.tour != null && html`<${Tour} />`}
     <div class="toasts">${s.ui.toasts.map(t => html`<div class=${'toast' + (t.kind === 'err' ? ' err' : '')} key=${t.id}>${t.text}</div>`)}</div>
     <${Splitters} fmt=${fmt} showInsp=${showInsp} />
   </div>`;

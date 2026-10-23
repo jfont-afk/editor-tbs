@@ -6,6 +6,7 @@ import * as A from '../../core/actions.js';
 import { timelineWords } from '../../core/captions.js';
 import { isFiller } from '../../media/takes.js';
 import { player, timeBus } from '../../engine/player.js';
+import { VOZ_CLARA, NEUTRAL, isVozClara } from '../../audio/fx.js';
 
 function Silences() {
   const p = state.project;
@@ -36,6 +37,18 @@ function Silences() {
     ${found && html`<div class=${'note ' + (found.preview.length ? 'warn' : 'ok')}>${found.preview.length
       ? html`<b>${found.preview.length}</b> silencios · <b>${fmtDur(found.total)}</b> se quitarán (marcados en rojo en la línea de tiempo).`
       : 'No hay silencios con estos ajustes.'}</div>`}
+  </div>`;
+}
+
+// Voz clara para todos los clips de golpe (los ajustes finos están en Propiedades al seleccionar un clip)
+function VoiceAll() {
+  const p = state.project;
+  if (!p.clips.length) return html`<div class="note">Importa un vídeo para mejorar su audio.</div>`;
+  const all = p.clips.every(c => isVozClara(c.fx));
+  return html`<div class="stack">
+    <${Btn} cls=${all ? 'primary' : 'fluor'} icon=${all ? 'check' : 'mic'} onClick=${() => A.applyFxToAllClips(all ? NEUTRAL : VOZ_CLARA)}>Voz clara en todo el vídeo</${Btn}>
+    <div class="dim small">${all ? 'Activada en todos los clips. Pulsa otra vez para quitarla.' : 'Quita retumbe y ruido de fondo, suaviza las eses, da presencia a la voz e iguala el volumen. Se oye al reproducir.'}${' '}
+      Para afinar (ruido, eses, presencia, fundidos) selecciona un clip y abre <b>Corrección de audio</b> en Propiedades. La música de la pista de audio puede bajar sola cuando hablas.</div>
   </div>`;
 }
 
@@ -159,6 +172,7 @@ export function EditPanel() {
         </div>
       </${Section}>
       <${Section} collapsible open=${true} icon="silence" title="Quitar silencios"><${Silences} /></${Section}>
+      <${Section} collapsible open=${true} icon="mic" title="Mejorar el audio"><${VoiceAll} /></${Section}>
       <${Section} collapsible open=${false} icon="user" title="Encuadre de la cabeza" hint="TikTok"><${HeadFrame} /></${Section}>
       <${Section} collapsible open=${false} icon="repeat" title="Tomas repetidas y muletillas"><${Takes} /></${Section}>
       <${Section} collapsible open=${false} icon="zap" title="Ritmo y transiciones">

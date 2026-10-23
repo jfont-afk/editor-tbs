@@ -51,8 +51,15 @@ export function splitAt(p, t) {
   if (src - clip.in < MIN_CLIP || clip.out - src < MIN_CLIP) return false;
   const b = { ...structuredClone(clip), id: uid('c'), in: src, transition: null };
   clip.out = src;
+  splitFades(clip, b);
   p.clips.splice(index + 1, 0, b);
   return true;
+}
+
+// Al partir un clip, el fundido de entrada se queda en el primer trozo y el de salida en el segundo
+function splitFades(a, b) {
+  if (a.fx) a.fx = { ...a.fx, fadeOut: 0 };
+  if (b.fx) b.fx = { ...b.fx, fadeIn: 0 };
 }
 
 export function deleteClip(p, id) {
@@ -137,6 +144,7 @@ export function removeSourceRanges(p, assetId, ranges) {
     let after = 0;
     segs.forEach((s, k) => {
       const nc = { ...structuredClone(c), id: k === 0 ? c.id : uid('c'), in: s.in, out: s.out, transition: k === 0 ? c.transition : null };
+      if (nc.fx) { if (k > 0) nc.fx.fadeIn = 0; if (k < segs.length - 1) nc.fx.fadeOut = 0; }
       out.push(nc);
       after += clipDur(nc);
     });

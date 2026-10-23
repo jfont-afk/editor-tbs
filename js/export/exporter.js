@@ -12,6 +12,7 @@ import { captionGroups } from '../core/captions.js';
 import { Compositor } from '../render/compositor.js';
 import { preloadOverlayImages } from '../render/motions.js';
 import { normalizeForSocial } from './loudness.js';
+import { FxChain, loadWorklet, duckNode, hasFx, hasFades } from '../audio/fx.js';
 import { loadSegmenter } from '../ai/vision.js';
 
 const VIDEO_CODECS = ['avc1.640033', 'avc1.640028', 'avc1.4d0033', 'avc1.4d0028', 'avc1.42e033', 'avc1.42e028'];
@@ -51,8 +52,35 @@ export async function mixAudio(p, sr = 48000) {
     if (!rt?.file) continue;
     try { decoded.set(a.id, await ctx.decodeAudioData(await rt.file.arrayBuffer())); } catch { /* sin audio */ }
   }
+  // misma cadena de corrección que la vista previa: voz → bus de voz; música con "bajar al hablar" → nodo que escucha ese bus
+  const worklet = await loadWorklet(ctx);
+  const voiceBus = ctx.createGain();
+  voiceBus.connect(ctx.destination);
+  // los clips con los mismos ajustes comparten cadena (no se solapan en el tiempo: sus fundidos van en la misma ganancia)
+  const shared = new Map();
+  const target = (fx, t, d, own = false) => {
+    if (!hasFx(fx) && !hasFades(fx) && !(fx?.duck > 0)) return voiceBus;
+    const { fadeIn = 0, fadeOut = 0, ...rest } = fx;
+    const key = JSON.stringify(rest);
+    let ch = own ? null : shared.get(key);
+    if (!ch) {
+      ch = new FxChain(ctx, worklet);
+      ch.set(fx);
+      const duck = fx.duck > 0 ? duckNode(ctx, worklet) : null;
+      if (duck) {
+        duck.parameters.get('amount').value = fx.duck;
+        ch.output.connect(duck, 0, 0); voiceBus.connect(duck, 0, 1); duck.connect(ctx.destination);
+      } else ch.output.connect(voiceBus);
+      if (!own) shared.set(key, ch);
+    }
+    const fi = Math.min(fadeIn, d / 2), fo = Math.min(fadeOut, d / 2), g = ch.fade.gain;
+    g.setValueAtTime(fi > 0.01 ? 0 : 1, t);
+    if (fi > 0.01) g.linearRampToValueAtTime(1, t + fi);
+    if (fo > 0.01) { g.setValueAtTime(1, t + d - fo); g.linearRampToValueAtTime(0, t + d); }
+    return ch.input;
+  };
   // coloca un trozo [s0, s1] de un audio en el instante t (con velocidad y fundidos cortos para evitar chasquidos)
-  const place = (buf, t, s0, s1, sp, vol) => {
+  const place = (buf, t, s0, s1, sp, vol, out = voiceBus) => {
     if (!buf || vol <= 0.001 || s1 <= s0) return;
     s0 = Math.max(0, s0);
     const d = (s1 - s0) / sp;
@@ -61,7 +89,7 @@ export async function mixAudio(p, sr = 48000) {
     const f = Math.min(0.008, d / 4);
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + f);
     g.gain.setValueAtTime(vol, Math.max(t + f, t + d - f)); g.gain.linearRampToValueAtTime(0, t + d);
-    src.connect(g).connect(ctx.destination);
+    src.connect(g).connect(out);
     if (Math.abs(sp - 1) > 0.01) { src.buffer = timeStretch(ctx, buf, s0, s1, sp); src.start(t, 0, d); } // tono conservado
     else { src.buffer = buf; src.start(t, s0, s1 - s0); }
   };
@@ -71,12 +99,16 @@ export async function mixAudio(p, sr = 48000) {
     const vol = p.muted ? 0 : (c.volume ?? 1);
     const sp = c.speed || 1;
     const mode = c.dual?.audio || 'ab';
-    if (!c.dual || mode !== 'b') place(decoded.get(c.assetId), t, c.in, c.out, sp, vol);
-    if (c.dual && mode !== 'a') { const off = c.dual.off || 0; place(decoded.get(c.dual.assetId), t, c.in + off, c.out + off, sp, vol); }
+    const out = vol > 0.001 ? target(c.fx, t, d) : voiceBus;
+    if (!c.dual || mode !== 'b') place(decoded.get(c.assetId), t, c.in, c.out, sp, vol, out);
+    if (c.dual && mode !== 'a') { const off = c.dual.off || 0; place(decoded.get(c.dual.assetId), t, c.in + off, c.out + off, sp, vol, out); }
     t += d;
   }
   // pista de audio libre (micro externo, música…)
-  for (const a of p.audio || []) place(decoded.get(a.assetId), a.start, a.in, Math.min(a.out, a.in + Math.max(0, dur - a.start)), 1, p.audioMuted ? 0 : (a.volume ?? 1));
+  for (const a of p.audio || []) {
+    const s1 = Math.min(a.out, a.in + Math.max(0, dur - a.start)), vol = p.audioMuted ? 0 : (a.volume ?? 1);
+    if (vol > 0.001 && s1 > a.in) place(decoded.get(a.assetId), a.start, a.in, s1, 1, vol, target(a.fx, a.start, a.out - a.in, true));
+  }
   return ctx.startRendering();
 }
 

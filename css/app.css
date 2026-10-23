@@ -640,3 +640,22 @@ body.resizing.row { cursor: row-resize !important; }
 .acc-av { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-3); color: var(--white); font: 700 12px var(--font-head); }
 .pm-pop > a.pm-link { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--r-sm); color: var(--text); font-weight: 600; text-decoration: none; }
 .pm-pop > a.pm-link:hover { background: var(--surface-3); }
+
+/* ---------- Tutorial de bienvenida ---------- */
+.help-btn { font: 700 15px var(--font-head); }
+.tour { position: fixed; inset: 0; z-index: 90; }
+.tour-dim { position: absolute; inset: 0; background: rgba(5, 5, 7, 0.72); }
+.tour-hole { position: absolute; border-radius: var(--r-lg); box-shadow: 0 0 0 9999px rgba(5, 5, 7, 0.72), inset 0 0 0 2px var(--red); transition: left .25s, top .25s, width .25s, height .25s; pointer-events: none; }
+.tour-card { position: absolute; width: min(360px, calc(100vw - 24px)); padding: 20px 20px 16px; border-radius: var(--r-xl); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong), 0 30px 80px rgba(0, 0, 0, 0.6); transition: left .25s, top .25s; }
+.tour-card.center { width: min(440px, calc(100vw - 24px)); }
+.tour-step { font: 600 11px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--red); margin-bottom: 6px; }
+.tour-card h3 { margin: 0 0 8px; font-family: var(--font-head); font-size: 20px; letter-spacing: -0.02em; }
+.tour-card p { margin: 0 0 14px; color: var(--text-2); font-size: 13.5px; line-height: 1.55; }
+.tour-card b { color: var(--text); }
+.tour-dots { display: flex; gap: 5px; margin-bottom: 14px; flex-wrap: wrap; }
+.tour-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--surface-3); }
+.tour-dots span.done { background: var(--text-3); }
+.tour-dots span.on { background: var(--red); width: 18px; border-radius: 3px; }
+.tour-actions { display: flex; align-items: center; gap: 6px; }
+.tour-actions .spacer { flex: 1; }
+.tour-actions a.btn { text-decoration: none; }

@@ -20,6 +20,8 @@ Requisitos: Windows + Google Chrome actualizado (usa WebCodecs, WebGPU/WebGL y F
 - **Efectos**: zooms (rápido, lento, dentro, fuera, dinámico con marco inicial y final y curvas), seguir la cara, nitidez, ruido y aberración cromática.
 - **Color**: looks y ajustes con WebGL.
 - **Miniaturas** por capas con plantillas TBS y zona segura de Instagram.
+- **Audio**: Voz clara con un clic (retumbe, ruido de fondo, eses, presencia, volumen), fundidos y música que baja sola al hablar; se oye al reproducir y sale igual al exportar.
+- **Ayuda**: tutorial de bienvenida la primera vez (botón **?** para repetirlo) y guía en PDF (`docs/guia-editor-tbs.pdf`).
 - **Exportación MP4** (H.264 + AAC) rápida con WebCodecs, nítida y con el audio a −14 LUFS; SRT y capturas PNG.
 - Se adapta a pantallas grandes, portátiles/MacBook y móvil.
 - **Proyecto en carpeta** (tipo Premiere/DaVinci): brutos, versiones automáticas, exportaciones y miniaturas.

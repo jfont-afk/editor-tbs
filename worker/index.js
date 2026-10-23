@@ -39,7 +39,8 @@ export default {
       }
 
       const extra = user.renew ? { 'set-cookie': sessionCookie(user.renew, url) } : {};
-      if (path === '/api/me') return json({ id: user.id, email: user.email, name: user.name, role: user.role }, 200, extra);
+      if (path === '/api/me') return json({ id: user.id, email: user.email, name: user.name, role: user.role, ...(await prefs(env, user.id)) }, 200, extra);
+      if (path === '/api/me/prefs' && req.method === 'POST') return savePrefs(req, env, user);
       if (path === '/api/auth/password' && req.method === 'POST') return changePassword(req, env, user);
       if (path.startsWith('/api/projects')) return projects(req, env, user, path);
       if (path === '/cuenta' || path === '/cuenta/') return html(accountPage(user));
@@ -259,6 +260,22 @@ async function changePassword(req, env, user) {
   return json({ ok: true });
 }
 
+// ---------- Preferencias de la cuenta ----------
+const PREF_KEYS = ['tour']; // tour = versión del tutorial de bienvenida que ya ha visto
+async function prefs(env, userId) {
+  try {
+    const { results } = await env.DB.prepare('SELECT k, v FROM user_prefs WHERE user_id = ?').bind(userId).all();
+    return { prefs: Object.fromEntries(results.map(r => [r.k, r.v])) };
+  } catch { return { prefs: {} }; } // tabla aún sin crear
+}
+async function savePrefs(req, env, user) {
+  const b = await body(req);
+  const rows = PREF_KEYS.filter(k => b[k] !== undefined).map(k => env.DB.prepare(`INSERT INTO user_prefs (user_id, k, v, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_id, k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind(user.id, k, String(b[k]).slice(0, 200), now()));
+  if (rows.length) await env.DB.batch(rows);
+  return json({ ok: true });
+}
+
 // ---------- Proyectos por cuenta ----------
 async function gzip(str) {
   const s = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
@@ -366,6 +383,7 @@ async function admin(req, env, user, path, url) {
       await env.DB.batch([
         env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(target.id),
         env.DB.prepare('DELETE FROM projects WHERE user_id = ?').bind(target.id),
+        env.DB.prepare('DELETE FROM user_prefs WHERE user_id = ?').bind(target.id),
         env.DB.prepare('DELETE FROM users WHERE id = ?').bind(target.id),
       ]);
       return json({ ok: true });

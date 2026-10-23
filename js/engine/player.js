@@ -4,6 +4,8 @@ import { clipAt, layoutClips, totalDuration } from '../core/timeline.js';
 import { captionGroups } from '../core/captions.js';
 import { Compositor } from '../render/compositor.js';
 import { clamp } from '../lib.js';
+import { liveAudio } from '../audio/live.js';
+import { fadeGain } from '../audio/fx.js';
 
 // Canal ligero de tiempo (evita re-renderizar toda la interfaz 60 veces por segundo)
 const timeSubs = new Set();
@@ -114,6 +116,7 @@ class Player {
   play() {
     const p = state.project;
     if (!p.clips.length) return;
+    liveAudio.resume();
     if (timeBus.t >= this.duration - 0.05) this.seek(0);
     state.ui.playing = true;
     const hit = clipAt(p, timeBus.t);
@@ -150,8 +153,8 @@ class Player {
       if (!a) continue;
       live.add(c.id);
       const inside = t >= c.start && t < c.start + (c.out - c.in);
-      a.volume = clamp(c.volume ?? 1, 0, 1);
-      a.muted = this.muted || (c.volume ?? 1) <= 0.001 || !!state.project.audioMuted;
+      const mute = this.muted || (c.volume ?? 1) <= 0.001 || !!state.project.audioMuted;
+      if (!this.route(a, c.fx, mute ? 0 : c.volume ?? 1)) { a.volume = clamp(c.volume ?? 1, 0, 1); a.muted = mute; }
       if (playing && inside) {
         const want = c.in + (t - c.start);
         if (force || Math.abs(a.currentTime - want) > 0.12) a.currentTime = want;
@@ -175,9 +178,42 @@ class Player {
   toggle() { state.ui.playing ? this.pause() : this.play(); }
 
   applyAudio(el, clip) {
-    el.volume = clamp(clip.volume ?? 1, 0, 1);
-    el.muted = this.muted || state.project.muted || (clip.volume ?? 1) <= 0.001 || clip.dual?.audio === 'b';
+    const mute = this.muted || state.project.muted || (clip.volume ?? 1) <= 0.001 || clip.dual?.audio === 'b';
     el.playbackRate = clip.speed || 1;
+    if (this.route(el, clip.fx, mute ? 0 : clamp(clip.volume ?? 1, 0, 1))) return;
+    el.volume = clamp(clip.volume ?? 1, 0, 1);
+    el.muted = mute;
+  }
+
+  // ---- Corrección de audio en la vista previa (Web Audio) ----
+  // "Escuchar el original" (state.ui.audioOrig) deja la voz sin corregir para comparar
+  fxOf(fx) { return state.ui.audioOrig ? null : fx; }
+  route(el, fx, vol, fade = null) {
+    const ch = liveAudio.chain(el);
+    if (!ch) return null;
+    if (el.muted || el.volume !== 1) { el.muted = false; el.volume = 1; }
+    ch.set(this.fxOf(fx), true);
+    liveAudio.level(ch, vol, fade ?? ch._fade ?? 1);
+    return ch;
+  }
+  // Volumen, fundidos y ajustes de cada fuente en el instante t (se llama en cada fotograma)
+  mixLive(t) {
+    if (!liveAudio.on) return;
+    const p = state.project;
+    const hit = clipAt(p, t);
+    if (hit && this.cur?.clipId === hit.clip.id && this.isVideo(this.cur.el)) {
+      const c = hit.clip, f = fadeGain(c.fx, t - hit.start, hit.dur), v = clamp(c.volume ?? 1, 0, 1);
+      const off = this.muted || p.muted || v <= 0.001;
+      this.route(this.cur.el, c.fx, off || c.dual?.audio === 'b' ? 0 : v, f);
+      if (this.el2 && c.dual) this.route(this.el2, c.fx, off || c.dual.audio === 'a' ? 0 : v, f);
+    }
+    for (const c of p.audio || []) {
+      const a = this.auEls?.get(c.id);
+      if (!a) continue;
+      const mute = this.muted || (c.volume ?? 1) <= 0.001 || !!p.audioMuted;
+      const ch = this.route(a, c.fx, mute ? 0 : c.volume ?? 1, fadeGain(c.fx, t - c.start, c.out - c.in));
+      if (ch) liveAudio.setDuck(ch, state.ui.audioOrig ? 0 : c.fx?.duck || 0);
+    }
   }
 
   // Vídeo secundario (montaje de persona duplicada): la otra toma, sincronizada con la principal
@@ -190,8 +226,8 @@ class Player {
     if (!el) return;
     if (this.el2 !== el) { this.el2?.pause?.(); this.el2 = el; el.onseeked = () => { this.dirty = true; }; }
     const want = hit.src + (c.dual.off || 0);
-    el.volume = clamp(c.volume ?? 1, 0, 1);
-    el.muted = this.muted || state.project.muted || c.dual.audio === 'a';
+    const mute = this.muted || state.project.muted || c.dual.audio === 'a';
+    if (!this.route(el, c.fx, mute ? 0 : clamp(c.volume ?? 1, 0, 1))) { el.volume = clamp(c.volume ?? 1, 0, 1); el.muted = mute; }
     el.playbackRate = c.speed || 1;
     if (state.ui.playing) {
       if (Math.abs(el.currentTime - want) > 0.1) el.currentTime = want;
@@ -251,6 +287,7 @@ class Player {
       const now = performance.now();
       if (now - (this._auSync || 0) > 160) { this.syncAudio(t, !this._auSync); this._auSync = now; }
       this.syncSecond(t);
+      this.mixLive(t);
     }
     if (this.dirty && this.ctx) { this.dirty = false; this.draw(); }
   }
