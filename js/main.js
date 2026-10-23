@@ -5,6 +5,7 @@ import * as A from './core/actions.js';
 import { player, timeBus } from './engine/player.js';
 import { App } from './ui/App.js';
 import { initPersistence } from './core/persist.js';
+import { initCloud } from './core/cloud.js';
 
 const ACCEPT = 'video/*,image/*,.mp4,.mov,.m4v,.webm,.mkv,.png,.jpg,.jpeg,.webp';
 
@@ -129,7 +130,9 @@ window.__editor = {
 
 (async () => {
   await loadFonts();
+  await initCloud();
   render(html`<${App} />`, document.getElementById('app'));
+  window.__booted = true;
   initPersistence();
   import('./core/library.js').then(m => m.initLibrary());
 })();

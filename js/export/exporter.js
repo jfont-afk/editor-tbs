@@ -1,11 +1,11 @@
-import { Muxer, ArrayBufferTarget } from 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs';
+import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs';
 import { runtime } from '../core/store.js';
 import { clamp } from '../lib.js';
 import { clipDur, totalDuration, layoutClips } from '../core/timeline.js';
 
 let mbPromise = null;
 function loadMediabunny() {
-  if (!mbPromise) mbPromise = import('https://cdn.jsdelivr.net/npm/mediabunny@1.61.6/+esm').catch((e) => { console.warn('mediabunny', e); return null; });
+  if (!mbPromise) mbPromise = import('../vendor/mediabunny.mjs').catch((e) => { console.warn('mediabunny', e); return null; });
   return mbPromise;
 }
 import { captionGroups } from '../core/captions.js';

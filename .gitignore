@@ -11,3 +11,8 @@ _pruebas/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Cloudflare
+node_modules/
+.wrangler/
+.dev.vars

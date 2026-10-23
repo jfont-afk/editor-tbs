@@ -2,7 +2,7 @@
 export {
   html, render, h, Component, createContext,
   useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useContext, useReducer,
-} from 'https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.module.js';
+} from './vendor/preact-htm.js';
 
 export const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
 export const clamp = (v, a, b) => Math.min(b, Math.max(a, v));

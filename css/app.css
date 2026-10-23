@@ -630,3 +630,13 @@ body.resizing.row { cursor: row-resize !important; }
   .toasts { bottom: 70px; left: 50%; }
   .sel-tools { transform: translateX(-50%) scale(0.92); }
 }
+.boot-err { max-width: 460px; margin: 0 16px; text-align: left; color: var(--text-2); font-size: 14px; }
+.boot-err b { display: block; color: var(--white); font-size: 17px; margin-bottom: 6px; }
+.boot-err ul { padding-left: 18px; margin: 10px 0 16px; }
+.boot-err li { margin: 4px 0; }
+.boot-err button { padding: 9px 16px; border-radius: 10px; border: 0; background: #f22b11; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+/* Cuenta (versión web) */
+.acc-btn { gap: 6px; padding: 0 6px; }
+.acc-av { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-3); color: var(--white); font: 700 12px var(--font-head); }
+.pm-pop > a.pm-link { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: var(--r-sm); color: var(--text); font-weight: 600; text-decoration: none; }
+.pm-pop > a.pm-link:hover { background: var(--surface-3); }

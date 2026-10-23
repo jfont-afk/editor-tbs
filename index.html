@@ -17,6 +17,33 @@
       <div class="boot-text">Cargando el editor…</div>
     </div>
   </div>
+  <script>
+    // Si algo impide arrancar (red de empresa, bloqueador, navegador antiguo…), se explica en vez de quedarse en "Cargando…"
+    (function () {
+      var shown = false;
+      window.__bootFail = function (why) {
+        if (shown || window.__booted) return; shown = true;
+        var el = document.querySelector('.boot'); if (!el) return;
+        var chromium = !!window.chrome || /Edg\//.test(navigator.userAgent);
+        el.innerHTML = '<div class="boot-mark">TBS</div><div class="boot-err"><b>No se ha podido abrir el editor</b>' +
+          '<p>' + (why || 'Algo ha bloqueado la carga.') + '</p><ul>' +
+          (chromium ? '' : '<li>Ábrelo con <b>Google Chrome</b> o Microsoft Edge en un ordenador (Safari y Firefox no son compatibles).</li>') +
+          '<li>Desactiva el bloqueador de anuncios o la VPN para esta web.</li>' +
+          '<li>Si estás en la red de la empresa, prueba con otra red (por ejemplo, datos del móvil).</li>' +
+          '<li>Recarga la página con Ctrl+Mayús+R (Cmd+Mayús+R en Mac).</li></ul>' +
+          '<button onclick="location.reload()">Reintentar</button></div>';
+      };
+      window.addEventListener('error', function (e) {
+        // solo cuentan los fallos de código (una fuente o imagen que no carga no impide abrir el editor)
+        var t = e.target;
+        if (window.__booted || (t && t !== window && t.tagName !== 'SCRIPT')) return;
+        __bootFail('Error al cargar: ' + (e.message || (t && t.src) || 'una parte del editor no ha llegado') + '.');
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) { if (!window.__booted) __bootFail('Error al cargar: ' + ((e.reason && e.reason.message) || e.reason)); });
+      setTimeout(function () { if (!window.__booted) __bootFail('El editor tarda demasiado en cargar.'); }, 25000);
+    })();
+  </script>
   <script type="module" src="js/main.js"></script>
+  <script nomodule>__bootFail('Este navegador es demasiado antiguo.');</script>
 </body>
 </html>

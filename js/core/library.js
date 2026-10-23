@@ -7,7 +7,7 @@ import { idbGet, idbPut } from './persist.js';
 import * as PF from './projectFolder.js';
 
 const PROJECT_FILE = 'proyecto.tbsedit';
-const FFLATE = 'https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js';
+const FFLATE = '../vendor/fflate.js';
 
 export const lib = { ws: null, perm: 'none', projects: null, loading: false }; // perm: none | prompt | granted
 const set = (patch) => { Object.assign(lib, patch); emit(); };

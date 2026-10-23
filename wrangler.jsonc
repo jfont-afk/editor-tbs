@@ -1,0 +1,17 @@
+{
+  // Editor TBS en Cloudflare Workers (web estática + cuentas + proyectos en la nube)
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "editor-tbs",
+  "main": "worker/index.js",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "none"
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "editor-tbs", "database_id": "f3c5d242-d990-48e9-8e21-59da17468439", "migrations_dir": "worker/migrations" }
+  ],
+  "observability": { "enabled": true }
+}

@@ -4,7 +4,10 @@ import { analyzeAsset } from './actions.js';
 import { fingerprint } from '../media/assets.js';
 import { player } from '../engine/player.js';
 
-const DB = 'tbs-editor', STORE = 'kv';
+let DB = 'tbs-editor';
+const STORE = 'kv';
+// Con cuenta (versión web), cada persona tiene su propio guardado en el navegador
+export function setDbScope(userId) { DB = 'tbs-editor:' + userId; }
 function db() {
   return new Promise((res, rej) => {
     const r = indexedDB.open(DB, 1);

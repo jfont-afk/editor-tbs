@@ -20,6 +20,7 @@ import { ExportPanel } from './panels/ExportPanel.js';
 import { FORMATS } from '../data/brand.js';
 import * as PF from '../core/projectFolder.js';
 import { folderState } from '../core/projectFolder.js';
+import { AccountMenu } from './Account.js';
 
 export const TABS = [
   { id: 'media', name: 'Medios', icon: 'folder', Panel: MediaPanel },
@@ -81,6 +82,7 @@ function TopBar({ s }) {
     <${ProjectMenu} />
     <input class="proj-name" value=${p.name} onChange=${e => update(pp => { pp.name = e.target.value || 'Proyecto sin título'; })} title="Nombre del proyecto" />
     <div class="top-spacer"></div>
+    <${AccountMenu} />
     <${LayoutMenu} />
     <${Btn} cls="icon ghost" icon="undo" title="Deshacer (Ctrl+Z)" disabled=${!canUndo()} onClick=${undo} />
     <${Btn} cls="icon ghost" icon="redo" title="Rehacer (Ctrl+Y)" disabled=${!canRedo()} onClick=${redo} />

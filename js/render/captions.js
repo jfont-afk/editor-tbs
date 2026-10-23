@@ -75,9 +75,10 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
       ctx.font = font;
       ctx.letterSpacing = `${(wf.ls * size).toFixed(2)}px`;
       const text = cleanWord(it.w.text, st, wf);
-      const w = ctx.measureText(text).width;
+      const m = ctx.measureText(text);
       const vm = vmetrics(ctx, font);
-      return { it, i, wf, size, font, text, w, big: wf.scale > 1.3, level: i === autoBig ? 1 : (it.w.hl | 0), ...vm };
+      // tinta real de la palabra (para apilar el título pegado al texto, sin huecos)
+      return { it, i, wf, size, font, text, w: m.width, inkDesc: m.actualBoundingBoxDescent, big: wf.scale > 1.3, level: i === autoBig ? 1 : (it.w.hl | 0), ...vm };
     });
     ctx.letterSpacing = '0px';
     ctx.font = fontStr(st.font, fs);
@@ -140,8 +141,14 @@ export function layoutCaption(ctx, g, st, env, posYOverride) {
   }
   const area0 = st.freePos ? { x: W * 0.04, y: 0, w: W * 0.92, h: H } : safe;
   const hero = heroItems.length ? layoutHero(ctx, heroItems, st, env, area0) : null;
-  const gap = hero && lines.length ? hero.fs * 0.14 : 0;
   const nbh = bh; // alto del subtítulo normal
+  // "Subtítulo + título": el título se apoya justo bajo la tinta de la última línea (no bajo su interlineado)
+  let gap = 0;
+  if (hero && st.heroMode === 'stack' && lines.length) {
+    const last = lines[lines.length - 1];
+    const inkBottom = nbh - last.h / 2 + last.asc / 2 + Math.max(0, ...last.items.map(x => x.inkDesc || 0));
+    gap = Math.max(fs, ...last.items.map(x => x.size)) * 0.16 - (nbh - inkBottom);
+  }
   if (hero && st.heroMode === 'stack') { bh += gap + hero.h; bw = Math.max(bw, hero.w); }
   else if (hero) { bw = Math.max(bw, hero.w); bh = Math.max(bh, hero.h); }
   // Escalonado: líneas desplazadas a izquierda y derecha
@@ -211,17 +218,23 @@ function layoutHero(ctx, heroItems, st, env, area) {
   ctx.font = font; ctx.letterSpacing = `${(ls * fs).toFixed(2)}px`;
   const lh = fs * 0.98;
   const vm = vmetrics(ctx, font);
-  const lines = best.lines.map(t => ({ text: t, w: ctx.measureText(t).width }));
+  // cada línea ocupa solo su tinta real (una palabra en minúsculas no reserva el alto de las mayúsculas)
+  const lines = best.lines.map(t => { const m = ctx.measureText(t); return { text: t, w: m.width, asc: m.actualBoundingBoxAscent, desc: m.actualBoundingBoxDescent }; });
   ctx.letterSpacing = '0px';
   const w = Math.max(...lines.map(l => l.w));
-  return { lines, fs, font, ls: ls * fs, lh, cap: vm.cap, w, h: lh * lines.length + (h.underline ? fs * 0.16 : 0), ts: heroItems[0].ts, style: h };
+  const lgap = fs * 0.06;
+  const ul = h.underline ? Math.max(0, fs * 0.1 + Math.max(4 * u, fs * 0.075) - lines[lines.length - 1].desc) : 0;
+  const ink = lines.reduce((a, l) => a + l.asc + l.desc, 0) + lgap * (lines.length - 1) + ul;
+  return { lines, fs, font, ls: ls * fs, lh, lgap, cap: vm.cap, w, h: ink, ts: heroItems[0].ts, style: h };
 }
 function placeHero(hero, cx, top, align, blockW) {
   hero.top = top;
   const bw = Math.max(blockW || 0, hero.w);
-  hero.lines.forEach((l, i) => {
+  let y = top;
+  hero.lines.forEach((l) => {
     l.x = align === 'left' ? cx - bw / 2 : align === 'right' ? cx + bw / 2 - l.w : cx - l.w / 2;
-    l.base = top + hero.lh * i + hero.lh * 0.5 + hero.cap / 2;
+    l.base = y + l.asc;
+    y = l.base + l.desc + hero.lgap;
   });
 }
 

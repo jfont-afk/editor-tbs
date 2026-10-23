@@ -1,0 +1,12 @@
+{
+  "name": "editor-tbs",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply editor-tbs --remote && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply editor-tbs --local"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}

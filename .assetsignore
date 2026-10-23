@@ -1,0 +1,17 @@
+# Archivos que NO se publican como web (Cloudflare)
+.git
+.github
+.claude
+.wrangler
+node_modules
+worker
+_pruebas
+wrangler.jsonc
+package.json
+package-lock.json
+servidor.ps1
+Abrir Editor.bat
+*.md
+.gitignore
+.nojekyll
+.assetsignore
