@@ -186,7 +186,19 @@ async function login(req, env, url) {
   return json({ ok: true, next: safeNext(b.next) }, 200, { 'set-cookie': sessionCookie(token, url) });
 }
 
+// Primera cuenta: enlace /invite/<SETUP_KEY> (secreto que se pone en Cloudflare). Solo vale mientras no haya ninguna cuenta.
+async function setupInvite(env, token) {
+  const key = env.SETUP_KEY;
+  if (!key || key.length < 24 || token.length !== key.length) return null;
+  const a = new TextEncoder().encode(token), b = new TextEncoder().encode(key);
+  if (!crypto.subtle.timingSafeEqual(a, b)) return null;
+  if (await env.DB.prepare('SELECT 1 FROM users LIMIT 1').first()) return null;
+  return { token_hash: null, kind: 'invite', role: 'admin', email: null, setup: true };
+}
+
 async function findInvite(env, token) {
+  const s = await setupInvite(env, token);
+  if (s) return s;
   const r = await env.DB.prepare('SELECT * FROM invites WHERE token_hash = ?').bind(await sha256(token)).first();
   if (!r || r.used_at || r.expires_at < now()) return null;
   return r;
@@ -212,10 +224,18 @@ async function register(req, env, url) {
     userId = 'u_' + randomToken(12);
     b._email = email; b._name = name;
   }
+  const pass = await hashPassword(b.password);
+  if (inv.setup) {
+    // primera cuenta de administrador: solo si sigue sin haber ninguna
+    const r = await env.DB.prepare(`INSERT INTO users (id, email, name, pass, role, created_at, last_login)
+      SELECT ?, ?, ?, ?, 'admin', ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)`).bind(userId, b._email, b._name, pass, now(), now()).run();
+    if (!r.meta?.changes) return json({ error: 'Este enlace ya se ha usado.' }, 400);
+    const token = await startSession(env, userId);
+    return json({ ok: true }, 200, { 'set-cookie': sessionCookie(token, url) });
+  }
   // se marca la invitación como usada antes de crear nada (un enlace = una cuenta)
   const claim = await env.DB.prepare('UPDATE invites SET used_at = ?, used_by = ? WHERE token_hash = ? AND used_at IS NULL').bind(now(), userId, inv.token_hash).run();
   if (!claim.meta?.changes) return json({ error: 'Este enlace ya se ha usado.' }, 400);
-  const pass = await hashPassword(b.password);
   if (inv.kind === 'reset') {
     await env.DB.batch([
       env.DB.prepare('UPDATE users SET pass = ? WHERE id = ?').bind(pass, userId),
@@ -421,7 +441,7 @@ async function invitePage(env, token) {
   const tok = JSON.stringify(token);
   return html(shell(reset ? 'Nueva contraseña · Editor TBS' : 'Crear cuenta · Editor TBS', `
   <div class="card"><h1>${reset ? 'Nueva contraseña' : 'Crea tu cuenta'}</h1>
-  <p class="mute small">${reset ? `Elige una contraseña nueva para <b>${esc(inv.email)}</b>.` : inv.role === 'admin' ? 'Invitación de <b>administrador</b>: podrás invitar a otras personas.' : 'Te han invitado al Editor TBS.'}</p>
+  <p class="mute small">${reset ? `Elige una contraseña nueva para <b>${esc(inv.email)}</b>.` : inv.setup ? 'Primera cuenta: serás <b>administrador</b> y podrás invitar a tu equipo.' : inv.role === 'admin' ? 'Invitación de <b>administrador</b>: podrás invitar a otras personas.' : 'Te han invitado al Editor TBS.'}</p>
   <form id="f">
     ${reset ? '' : `<label>Nombre</label><input name="name" autocomplete="name" required maxlength="80">
     <label>Correo</label><input name="email" type="email" autocomplete="username" required ${inv.email ? `value="${esc(inv.email)}" readonly` : ''}>`}

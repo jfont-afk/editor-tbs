@@ -4,7 +4,7 @@ Editor de vídeo para redes sociales (Reels, TikTok, Shorts) con el estilo de **
 Funciona en el navegador, en local: los vídeos nunca salen del ordenador.
 
 ## Cómo abrirlo
-**En la web (sin instalar nada):** https://jfont-afk.github.io/editor-tbs/ — ábrelo en Google Chrome.
+**En la web (con cuenta):** la versión de Cloudflare (`https://editor-tbs.<tu-subdominio>.workers.dev`) pide correo y contraseña. Los proyectos se guardan en tu cuenta; los vídeos se quedan en tu ordenador. Ábrelo en Google Chrome o Microsoft Edge.
 
 **En local:**
 1. Doble clic en **`Abrir Editor.bat`** (Windows). Arranca un servidor local en `http://localhost:5179` y abre Chrome.
@@ -24,6 +24,16 @@ Requisitos: Windows + Google Chrome actualizado (usa WebCodecs, WebGPU/WebGL y F
 - Se adapta a pantallas grandes, portátiles/MacBook y móvil.
 - **Proyecto en carpeta** (tipo Premiere/DaVinci): brutos, versiones automáticas, exportaciones y miniaturas.
 
+## Publicar en Cloudflare (una sola vez)
+1. Cloudflare › **Workers & Pages** › **Create application** › **Import a repository** (GitHub) › `jfont-afk/editor-tbs`.
+2. Nombre del proyecto: **editor-tbs** (tiene que coincidir con `wrangler.jsonc`). Rama: `main`. Build command: vacío. Deploy command: `npx wrangler deploy`.
+3. Al terminar: el Worker › **Settings** › **Variables and Secrets** › añadir un **Secret** llamado `SETUP_KEY` con la clave de primera configuración.
+4. Abre `https://editor-tbs.<tu-subdominio>.workers.dev/invite/<SETUP_KEY>` y crea la primera cuenta (administrador). Ese enlace deja de funcionar en cuanto existe una cuenta.
+5. En **/admin** se crean los enlaces de invitación para el resto del equipo (un solo uso, caducan en 7 días) y los enlaces para cambiar la contraseña.
+
+La base de datos (D1 `editor-tbs`) ya está creada y enlazada en `wrangler.jsonc`. Cada `git push` a `main` vuelve a publicar la web.
+Para probar en local: `npm install`, `npm run db:local` y `npm run dev` (crea un archivo `.dev.vars` con `SETUP_KEY=...`).
+
 ## Estructura
 - `index.html`, `css/app.css` — interfaz.
 - `js/core` — estado, línea de tiempo, subtítulos, acciones, guardado.
@@ -31,4 +41,6 @@ Requisitos: Windows + Google Chrome actualizado (usa WebCodecs, WebGPU/WebGL y F
 - `js/ai` — transcripción (Whisper), segmentación y caras (MediaPipe), auto-encuadre.
 - `js/export` — exportación MP4.
 - `js/ui` — componentes (Preact + htm, sin compilación).
+- `js/vendor` — librerías copiadas (para no depender de CDNs al arrancar).
+- `worker/` — servidor de Cloudflare: cuentas, invitaciones, administración y proyectos en la nube (D1).
 - `PROGRESO.md`, `REFERENCIAS.md` — historial de trabajo y referencias de diseño.
