@@ -291,11 +291,13 @@ class Denoiser {
       let e = 0; for (let j = 0; j < 480; j++) e += x[j] * x[j];
       const lv = 10 * Math.log10(e / 480 / 1073741824 + 1e-12);
       const sp = this.rvB > 0.6;
-      if (!this.agcOn) { this.agcOn = true; this.agcL = lv + 12; }
+      if (e < 1e-6) { /* silencio digital (antes del clip, pausa del vídeo): no cuenta */ }
+      else if (!this.agcOn) { this.agcOn = true; this.agcL = lv + 12; }
       else if (!this.agcSp) {
         if (sp) { this.agcSp = true; this.agcL = Math.max(lv, this.agcL - 12); }
-        else this.agcL += (lv + 12 - this.agcL) * 0.02;
+        else this.agcL += (lv + 12 - this.agcL) * 0.1;
       } else if (sp || lv > this.agcL) this.agcL += (lv - this.agcL) * (lv > this.agcL ? 0.2 : 0.01);
+      if (!this.agcOn) this.agcL = lv + 12;
       const g = Math.pow(10, Math.max(-20, Math.min(30, -20 - this.agcL)) / 20);
       for (let j = 0, p = r.pin; j < 480; j++, p++) H[p] = x[j] * g;
       r.e.tbs_p1(this.rst);
