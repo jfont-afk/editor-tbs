@@ -1,7 +1,7 @@
 import { html } from '../lib.js';
 import { state, setUI } from '../core/store.js';
 import { Btn, Slider, Toggle } from './controls.js';
-import { VOZ_CLARA, NEUTRAL, isVozClara, hasFx } from '../audio/fx.js';
+import { VOZ_CLARA, NEUTRAL, isVozClara, hasFx, normFx } from '../audio/fx.js';
 
 const db = (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' dB';
 const pct = (v) => (v < 0.005 ? 'No' : Math.round(v * 100) + '%');
@@ -9,8 +9,11 @@ const sec = (v) => (v < 0.01 ? 'No' : v.toFixed(1).replace('.', ',') + ' s');
 
 // Corrección de audio de un clip o de un audio de la pista de audio.
 // set(patch, key) cambia los ajustes `fx`; todo se oye al reproducir y sale igual al exportar.
-export function AudioFixes({ fx, set, track = false, applyAll }) {
-  const f = { ...NEUTRAL, ...(fx || {}) };
+export function AudioFixes({ fx, set: save, track = false, applyAll }) {
+  // ajustes de un proyecto antiguo: se muestran ya migrados y se guardan migrados al tocar algo
+  const nf = normFx(fx), old = nf !== fx;
+  const set = old ? (patch, key) => save({ gate: nf.gate, fxv: nf.fxv, ...patch }, key) : save;
+  const f = { ...NEUTRAL, ...(nf || {}) };
   const voz = isVozClara(f);
   const orig = !!state.ui.audioOrig;
   return html`<div class="stack">
