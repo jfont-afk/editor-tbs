@@ -37,6 +37,24 @@
 #include "rnn.h"
 #include "rnn_data.h"
 #include <stdio.h>
+#include <stdlib.h>
+
+/* Editor TBS: los pesos (int8) se pasan a float la primera vez que se usa cada capa, así los bucles
+   de abajo son multiplicaciones y sumas de float que el compilador vectoriza (mismo resultado). */
+typedef struct { const rnn_weight *key; float *w; } WCache;
+static WCache wcache[16];
+static int nwcache = 0;
+static const float *fweights(const rnn_weight *w, int n)
+{
+   int i;
+   float *f;
+   for (i=0;i<nwcache;i++) if (wcache[i].key == w) return wcache[i].w;
+   f = malloc(n*sizeof(float));
+   if (!f || nwcache == 16) __builtin_trap();
+   for (i=0;i<n;i++) f[i] = w[i];
+   wcache[nwcache].key = w; wcache[nwcache].w = f; nwcache++;
+   return f;
+}
 
 static OPUS_INLINE float tansig_approx(float x)
 {
@@ -86,10 +104,11 @@ static void compute_dense(const DenseLayer *layer, float *output, const float *i
    M = layer->nb_inputs;
    N = layer->nb_neurons;
    stride = N;
+   const float *W = fweights(layer->input_weights, M*N);
    for (i=0;i<N;i++) output[i] = layer->bias[i];
    for (j=0;j<M;j++)
    {
-      const rnn_weight *w = &layer->input_weights[j*stride];
+      const float *w = &W[j*stride];
       const float x = input[j];
       for (i=0;i<N;i++) output[i] += w[i]*x;
    }
@@ -119,17 +138,18 @@ static void compute_gru(const GRULayer *gru, float *state, const float *input)
    M = gru->nb_inputs;
    N = gru->nb_neurons;
    stride = 3*N;
+   const float *Wi = fweights(gru->input_weights, M*stride), *Wr = fweights(gru->recurrent_weights, N*stride);
    /* puertas de actualización (z) y de reinicio (r) a la vez: columnas 0..2N-1 */
    for (i=0;i<2*N;i++) zr[i] = gru->bias[i];
    for (j=0;j<M;j++)
    {
-      const rnn_weight *w = &gru->input_weights[j*stride];
+      const float *w = &Wi[j*stride];
       const float x = input[j];
       for (i=0;i<2*N;i++) zr[i] += w[i]*x;
    }
    for (j=0;j<N;j++)
    {
-      const rnn_weight *w = &gru->recurrent_weights[j*stride];
+      const float *w = &Wr[j*stride];
       const float x = state[j];
       for (i=0;i<2*N;i++) zr[i] += w[i]*x;
    }
@@ -139,13 +159,13 @@ static void compute_gru(const GRULayer *gru, float *state, const float *input)
    for (i=0;i<N;i++) h[i] = gru->bias[2*N + i];
    for (j=0;j<M;j++)
    {
-      const rnn_weight *w = &gru->input_weights[2*N + j*stride];
+      const float *w = &Wi[2*N + j*stride];
       const float x = input[j];
       for (i=0;i<N;i++) h[i] += w[i]*x;
    }
    for (j=0;j<N;j++)
    {
-      const rnn_weight *w = &gru->recurrent_weights[2*N + j*stride];
+      const float *w = &Wr[2*N + j*stride];
       const float x = rs[j];
       for (i=0;i<N;i++) h[i] += w[i]*x;
    }
@@ -161,6 +181,30 @@ static void compute_gru(const GRULayer *gru, float *state, const float *input)
 }
 
 #define INPUT_SIZE 42
+
+/* Editor TBS: compute_rnn partido en dos (para repartir el cálculo): a) capa de entrada, GRU de voz
+   (probabilidad de voz) y GRU de ruido; b) GRU de limpieza y ganancias. */
+void compute_rnn_a(RNNState *rnn, float *vad, const float *input) {
+  int i;
+  float dense_out[MAX_NEURONS];
+  float noise_input[MAX_NEURONS*3];
+  compute_dense(rnn->model->input_dense, dense_out, input);
+  compute_gru(rnn->model->vad_gru, rnn->vad_gru_state, dense_out);
+  compute_dense(rnn->model->vad_output, vad, rnn->vad_gru_state);
+  for (i=0;i<rnn->model->input_dense_size;i++) noise_input[i] = dense_out[i];
+  for (i=0;i<rnn->model->vad_gru_size;i++) noise_input[i+rnn->model->input_dense_size] = rnn->vad_gru_state[i];
+  for (i=0;i<INPUT_SIZE;i++) noise_input[i+rnn->model->input_dense_size+rnn->model->vad_gru_size] = input[i];
+  compute_gru(rnn->model->noise_gru, rnn->noise_gru_state, noise_input);
+}
+void compute_rnn_b(RNNState *rnn, float *gains, const float *input) {
+  int i;
+  float denoise_input[MAX_NEURONS*3];
+  for (i=0;i<rnn->model->vad_gru_size;i++) denoise_input[i] = rnn->vad_gru_state[i];
+  for (i=0;i<rnn->model->noise_gru_size;i++) denoise_input[i+rnn->model->vad_gru_size] = rnn->noise_gru_state[i];
+  for (i=0;i<INPUT_SIZE;i++) denoise_input[i+rnn->model->vad_gru_size+rnn->model->noise_gru_size] = input[i];
+  compute_gru(rnn->model->denoise_gru, rnn->denoise_gru_state, denoise_input);
+  compute_dense(rnn->model->denoise_output, gains, rnn->denoise_gru_state);
+}
 
 void compute_rnn(RNNState *rnn, float *gains, float *vad, const float *input) {
   int i;

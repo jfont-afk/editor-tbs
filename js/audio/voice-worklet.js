@@ -1,21 +1,27 @@
 // Procesadores de audio (AudioWorklet). Se usan igual en la vista previa (AudioContext)
 // y al exportar (OfflineAudioContext), así lo que se oye al reproducir es lo que sale en el MP4.
-//  · tbs-voice: reducción de ruido de fondo (supresor espectral + RNNoise) + suavizar eses (de-esser)
+//  · tbs-voice: reducción de ruido de fondo (supresor espectral + RNNoise), suavizar eses (de-esser)
+//               e igualar volumen (compresor guiado por la voz)
 //  · tbs-duck: baja la música mientras se habla (entrada 0 = música, entrada 1 = voz)
 
 const lin = (d) => Math.pow(10, d / 20);
 const dB = (x) => 20 * Math.log10(x + 1e-9);
 const smooth = (ms) => Math.exp(-1 / (sampleRate * ms / 1000));
+const coef = (ms) => 1 - Math.exp(-1 / (sampleRate * ms / 1000));
 
 // ---------- Reducción de ruido ----------
-// STFT de 1024 muestras con salto de 256 (ventana raíz de Hann: reconstrucción perfecta).
+// STFT de 1024 muestras con salto de 256 y ventanas asimétricas de bajo retardo (Mauler y Martin, 2011):
+// la de análisis sube despacio y cae en las últimas 256 muestras (resolución de 47 Hz, separa los armónicos
+// de la voz) y la de síntesis solo ocupa las últimas 512; análisis × síntesis = Hann de 512, que con salto
+// de 256 reconstruye exacto. Retardo: 512 muestras (10,7 ms a 48 kHz; fx.js: VOICE_LATENCY).
 // Ruido estimado con IMCRA (Cohen 2003: mínimos suavizados en dos pasadas y promedio controlado por la
 // probabilidad de voz) con techos por mínimos para no confundir la voz con ruido, detector de subidas
 // bruscas (cambio de plano) y ganancia OM-LSA (log-espectral con probabilidad de voz y suelo).
 // En paralelo, RNNoise (red neuronal de Xiph, 22 bandas) da otra ganancia por banda: se aplica la menor
 // de las dos, así el ruido no estacionario (tráfico, gente, golpes) también baja y el arranque es inmediato.
-// Latencia fija: N - 128 (STFT) + 512 (para tener las tramas de RNNoise a ambos lados) = 1408 muestras (29 ms a 48 kHz).
-const N = 1024, HOP = 256, K = N / 2 + 1, RD = 512; // latencia = N - 128 + RD = 1408 (fx.js: VOICE_LATENCY)
+// El trabajo de cada trama se reparte en dos cuantos de 128 muestras (análisis y aprendizaje en uno,
+// ganancia y síntesis en el siguiente; RNNoise en los cuantos sin síntesis): sin picos de CPU.
+const N = 1024, HOP = 256, K = N / 2 + 1, SYN = 2 * HOP;
 
 class RFFT {
   constructor(n) {
@@ -23,22 +29,27 @@ class RFFT {
     let bits = 0; while ((1 << bits) < M) bits++;
     this.rev = new Uint32Array(M);
     for (let i = 0; i < M; i++) { let r = 0; for (let b = 0; b < bits; b++) r |= ((i >> b) & 1) << (bits - 1 - b); this.rev[i] = r; }
-    this.cs = new Float64Array(M >> 1); this.sn = new Float64Array(M >> 1);
-    for (let i = 0; i < (M >> 1); i++) { this.cs[i] = Math.cos(-2 * Math.PI * i / M); this.sn[i] = Math.sin(-2 * Math.PI * i / M); }
+    // giros de cada etapa seguidos en memoria (cos, sen)
+    this.tw = new Float64Array(2 * M);
+    for (let size = 4, o = 2; size <= M; o += size, size <<= 1) {
+      for (let j = 0; j < size >> 1; j++) { this.tw[o + 2 * j] = Math.cos(-2 * Math.PI * j / size); this.tw[o + 2 * j + 1] = Math.sin(-2 * Math.PI * j / size); }
+    }
     this.wr = new Float64Array(M + 1); this.wi = new Float64Array(M + 1);
     for (let k = 0; k <= M; k++) { this.wr[k] = Math.cos(-2 * Math.PI * k / n); this.wi[k] = Math.sin(-2 * Math.PI * k / n); }
     this.zr = new Float64Array(M); this.zi = new Float64Array(M);
   }
   _fft(re, im, sg) {
-    const M = this.M, rev = this.rev, cs = this.cs, sn = this.sn;
+    const M = this.M, rev = this.rev, tw = this.tw;
     for (let i = 0; i < M; i++) { const j = rev[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
-    for (let size = 2; size <= M; size <<= 1) {
-      const half = size >> 1, step = M / size;
-      for (let s = 0; s < M; s += size) {
-        for (let j = 0, k = 0; j < half; j++, k += step) {
-          const a = s + j, b = a + half, wr = cs[k], wi = sg * sn[k];
-          const tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;
-          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+    for (let a = 0; a < M; a += 2) { const b = a + 1, tr = re[b], ti = im[b]; re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti; }
+    for (let size = 4, o = 2; size <= M; o += size, size <<= 1) {
+      const half = size >> 1;
+      for (let j = 0; j < half; j++) {
+        const wr = tw[o + 2 * j], wi = sg * tw[o + 2 * j + 1];
+        for (let a = j; a < M; a += size) {
+          const b = a + half, xr = re[b], xi = im[b];
+          const tr = xr * wr - xi * wi, ti = xr * wi + xi * wr, ar = re[a], ai = im[a];
+          re[b] = ar - tr; im[b] = ai - ti; re[a] = ar + tr; im[a] = ai + ti;
         }
       }
     }
@@ -85,6 +96,32 @@ function lsaExp(v) {
   const i = p | 0;
   return LSA[i] + (LSA[i + 1] - LSA[i]) * (p - i);
 }
+// e^y para y en [−16, 0] (tabla con interpolación lineal, error relativo < 2e-6; más rápida que Math.exp)
+const EX_N = 4096, EX_L = -16, EX_S = EX_N / -EX_L, EXT = new Float64Array(EX_N + 2);
+for (let i = 0; i <= EX_N + 1; i++) EXT[i] = Math.exp(EX_L + i / EX_S);
+function texp(y) {
+  if (y <= EX_L) return EXT[0];
+  const p = (y - EX_L) * EX_S;
+  if (p >= EX_N) return 1;
+  const i = p | 0;
+  return EXT[i] + (EXT[i + 1] - EXT[i]) * (p - i);
+}
+// mediana de los n primeros valores de a (los reordena; sin crear arrays)
+function median(a, n) {
+  let lo = 0, hi = n - 1;
+  const k = n >> 1;
+  while (hi > lo) {
+    const pv = a[(lo + hi) >> 1];
+    let i = lo, j = hi;
+    while (i <= j) {
+      while (a[i] < pv) i++;
+      while (a[j] > pv) j--;
+      if (i <= j) { const t = a[i]; a[i] = a[j]; a[j] = t; i++; j--; }
+    }
+    if (k <= j) hi = j; else if (k >= i) lo = i; else break;
+  }
+  return a[k];
+}
 
 // RNNoise (js/vendor/rnnoise.wasm, solo análisis): una instancia por contexto de audio, un estado por cadena
 let RNN = null;
@@ -105,16 +142,23 @@ function rnnInstance(mod) {
 const RB = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 34, 40, 48, 60, 78, 100].map(v => v * 200);
 
 class Denoiser {
-  constructor(rnnMod) {
+  constructor(rnnMod, T) {
+    this.T = T = T || {};
     const F = () => new Float64Array(K);
     this.fft = new RFFT(N);
-    this.win = new Float64Array(N);
-    for (let i = 0; i < N; i++) this.win[i] = Math.sqrt(0.5 - 0.5 * Math.cos(2 * Math.PI * i / N));
-    this.ola = HOP / (N / 2);
+    // ventanas: análisis (N), síntesis (últimas SYN muestras) y su producto (Hann de SYN)
+    const A = N - HOP;
+    this.wa = new Float64Array(N); this.ws = new Float64Array(SYN); this.hw = new Float64Array(SYN);
+    for (let n = 0; n < N; n++) this.wa[n] = n < A ? Math.sqrt(0.5 - 0.5 * Math.cos(Math.PI * n / A)) : Math.sqrt(0.5 + 0.5 * Math.cos(Math.PI * (n - A) / HOP));
+    for (let j = 0; j < SYN; j++) {
+      const n = N - SYN + j, h = 0.5 - 0.5 * Math.cos(2 * Math.PI * j / SYN);
+      this.hw[j] = h; this.ws[j] = n >= A ? this.wa[n] : h / this.wa[n];
+    }
+    this.RD = T.rd || 0; this.LL = N + this.RD; this.lat = SYN + this.RD;
     this.nch = 0; this.line = []; this.out = []; this.re = []; this.im = [];
     this.frame = new Float64Array(N);
-    this.Y2 = F(); this.G = F().fill(1);
-    this.S = F(); this.St = F(); this.Smin = F(); this.Stmp = F(); this.Stmin = F(); this.Sttmp = F(); this.I = F();
+    this.Y2 = F(); this.G = F().fill(1); this.Gp = F().fill(1); this.Gc = F();
+    this.S = F(); this.St = F(); this.Smin = F(); this.Stmp = F(); this.Stmin = F(); this.Sttmp = F(); this.I = F(); this.SY = F();
     this.lamb = F(); this.lam = F(); this.ghPrev = F(); this.y2Prev = F(); this.xi = F(); this.gam = F();
     this.zeta = F(); this.zl = F(); this.zg = F(); this.cum = new Float64Array(K + 1); this.h1 = F(); this.h2 = F();
     const hopMs = HOP / sampleRate * 1000;
@@ -122,12 +166,12 @@ class Denoiser {
     const fr = (s) => Math.max(1, Math.round(s * 1000 / hopMs));
     // IMCRA (constantes de Cohen a 8 ms de salto, reescaladas) y OM-LSA
     this.as = sc(0.9, 8); this.ad = sc(0.85, 8); this.add = sc(0.92, 8); this.bz = sc(0.7, 8);
-    this.Bmin = 1.556; this.beta = 1.47; // sesgos medidos con ruido blanco/rosa para esta ventana
+    this.Bmin = T.bmin || 1.556; this.beta = T.beta || 1.47; // sesgos medidos con ruido blanco/rosa para esta ventana
     this.ximin = Math.pow(10, -2.5);
     this.U = 8; this.Vlong = Math.max(2, Math.round(fr(0.96) / 8)); this.Vshort = Math.max(2, Math.round(fr(0.25) / 8));
     this.start = fr(0.6);
     this.Sw = Array.from({ length: 8 }, () => F()); this.Stw = Array.from({ length: 8 }, () => F());
-    this.vc = 0; this.ui = 0; this.frames = 0; this.m0 = 0; this.ready = false;
+    this.vc = 0; this.ui = 0; this.frames = 0; this.m0 = 0; this.ready = false; this.learned = false;
     this.zmin = 0.1; this.zmax = Math.pow(10, -0.5); this.lr = Math.log(this.zmax / this.zmin); this.qmax = 0.95;
     this.zfPrev = 0; this.zpeak = 1;
     // subidas bruscas del ruido (cambio de plano o de sitio)
@@ -135,18 +179,23 @@ class Denoiser {
     this.shMin = [F().fill(Infinity), F().fill(Infinity), F().fill(Infinity)]; this.shMax = [F(), F(), F()];
     this.cMin = F().fill(Infinity); this.cMax = F();
     this.k0 = Math.round(300 * N / sampleRate); this.k1 = Math.min(K - 1, Math.round(10000 * N / sampleRate));
+    this.kv = Math.round(4000 * N / sampleRate);
     // suelo de largo plazo (~2 s, periodograma poco suavizado): la voz siempre tiene pausas
     this.af = Math.exp(-hopMs / 20); this.Sf = F(); this.fcur = F().fill(Infinity); this.fmin = F().fill(Infinity);
     this.fwin = Array.from({ length: 8 }, () => F().fill(Infinity)); this.fV = Math.max(1, Math.round(fr(2) / 8)); this.fc = 0; this.fi = 0;
     this.quiet = 0; this.idle = 1e9; this.diff = 0; this.pos = 0; this.rsam = 0; this.att = -1; this.gmin = 1; this.lgmin = 0;
+    this.pendB = false; this.mono = false; this.amt = 0; this.fEnd = 0; this.pv = -1; this.Pf = 0; this.vadWanted = false;
+    this.capK = T.capK ?? 2.5;
     // RNNoise
     const r = rnnInstance(rnnMod);
     this.rnn = r ? r : null;
+    this.hasGr = false; this.vad = 0;
     if (this.rnn) {
       this.rst = r.e.tbs_create();
-      this.racc = new Float32Array(480); this.rbuf = new Float32Array(480); this.rn = 0; this.rPend = false; this.rPendEnd = 0;
-      this.rEndA = -1e9; this.rEndB = -1e9; this.rvA = 0; this.rvB = 0; this.agcL = null; this.pgDb = 0;
+      this.racc = new Float32Array(480); this.rbuf = new Float32Array(480); this.rn = 0; this.rStep = 0; this.rPendEnd = 0;
+      this.rEndA = -1e9; this.rEndB = -1e9; this.rvA = 0; this.rvB = 0; this.agcL = null; this.agcSp = false; this.pgDb = 0;
       this.rgA = new Float32Array(22).fill(1); this.rgB = new Float32Array(22).fill(1); this.rgi = new Float64Array(22);
+      this.Gr = F();
       this.rbi = new Int32Array(K); this.rbf = new Float64Array(K);
       for (let k = 0; k < K; k++) {
         const f = k * sampleRate / N;
@@ -158,21 +207,21 @@ class Denoiser {
   ensure(nch) {
     while (this.nch < nch) {
       // canal nuevo: copia del primero (no hay saltos si una fuente pasa de mono a estéreo)
-      this.line.push(this.nch ? Float64Array.from(this.line[0]) : new Float64Array(N + RD));
-      this.out.push(this.nch ? Float64Array.from(this.out[0]) : new Float64Array(N));
-      this.re.push(new Float64Array(K)); this.im.push(new Float64Array(K));
+      this.line.push(this.nch ? Float64Array.from(this.line[0]) : new Float64Array(this.LL));
+      this.out.push(this.nch ? Float64Array.from(this.out[0]) : new Float64Array(SYN));
+      this.re.push(this.nch ? Float64Array.from(this.re[0]) : new Float64Array(K)); this.im.push(this.nch ? Float64Array.from(this.im[0]) : new Float64Array(K));
       this.nch++;
     }
   }
-  // un cuanto de 128 muestras: x = canales de entrada (o vacío), amount 0..1, y = canales de salida (salida retrasada VOICE_LATENCY)
+  // un cuanto de 128 muestras: x = canales de entrada (o vacío), amount 0..1, y = canales de salida (salida retrasada this.lat)
   process(x, nIn, amount, y) {
-    const nch = Math.max(1, Math.min(nIn, 2));
+    const nch = Math.max(1, Math.min(nIn, 2)), LL = this.LL;
     this.ensure(nch);
     let nz = false;
     for (let c = 0; c < this.nch; c++) {
       const L = this.line[c], src = x[Math.min(c, nIn - 1)];
       L.copyWithin(0, 128);
-      const o = N + RD - 128;
+      const o = LL - 128;
       if (src) for (let i = 0; i < 128; i++) { const v = src[i]; L[o + i] = v; if (v !== 0) nz = true; }
       else L.fill(0, o);
     }
@@ -186,87 +235,131 @@ class Denoiser {
     this.quiet = nz ? this.quiet + 128 : 0;          // muestras seguidas con señal
     this.idle = nz ? 0 : this.idle + 128;           // muestras seguidas de silencio digital
     const on = amount > 0.001;
+    let stepA = false;
     // en silencio (elemento en pausa, fuera del clip) no se calcula nada cuando ya se ha vaciado todo
-    if (this.idle < N + RD + N) {
-      // la trama STFT va en cuantos alternos; la de RNNoise se calcula en un cuanto sin STFT (picos de CPU repartidos)
-      const frameNow = this.pos + 128 >= HOP;
-      if (on && this.rnn) {
-        if (this.rPend && !frameNow) this.rnnRun();
-        this.rnnFeed(frameNow);
-      } else { this.rn = 0; this.rPend = false; }
+    if (this.idle < LL + SYN + N) {
+      if ((on || this.vadWanted) && this.rnn) { this.rnnFeed(); if (this.rStep) this.rnnRun(); } else { this.rn = 0; this.rStep = 0; }
+      // cuantos alternos: síntesis de la trama analizada en el anterior, o análisis de la siguiente
+      if (this.pendB) this.synth();
       this.pos += 128;
-      if (frameNow) { this.pos = 0; this.frameStep(on ? amount : 0); }
-    } else { this.rn = 0; this.rPend = false; }
+      if (this.pos >= HOP) { this.pos = 0; stepA = true; }
+    } else { this.rn = 0; this.rStep = 0; this.pendB = false; }
     this.rsam += 128;
     for (let c = 0; c < y.length; c++) {
       const ob = this.out[Math.min(c, this.nch - 1)], dst = y[c];
       for (let i = 0; i < 128; i++) dst[i] = ob[i];
     }
-    for (let c = 0; c < this.nch; c++) { const ob = this.out[c]; ob.copyWithin(0, 128); ob.fill(0, N - 128); }
+    for (let c = 0; c < this.nch; c++) { const ob = this.out[c]; ob.copyWithin(0, 128); ob.fill(0, SYN - 128); }
+    if (stepA) this.analyze(on ? amount : 0);
   }
   // RNNoise analiza tramas de 480 muestras de la mezcla mono (escala de 16 bits); se guardan las dos últimas
-  rnnFeed(frameNow) {
-    const nch = this.nch === 2 && this.diff >= 128 ? 1 : this.nch, o = N + RD - 128, acc = this.racc;
+  rnnFeed() {
+    const nch = this.nch === 2 && this.diff >= 128 ? 1 : this.nch, o = this.LL - 128, acc = this.racc, w = 32768 / nch;
     for (let i = 0; i < 128; i++) {
       let m = 0;
       for (let c = 0; c < nch; c++) m += this.line[c][o + i];
-      acc[this.rn++] = m / nch * 32768;
+      acc[this.rn++] = m * w;
       if (this.rn === 480) {
-        this.rbuf.set(acc); this.rPendEnd = this.rsam + i + 1; this.rPend = true; this.rn = 0;
-        if (!frameNow) this.rnnRun();
+        while (this.rStep) this.rnnRun();   // (no pasa: entre dos tramas hay tres cuantos)
+        this.rbuf.set(acc); this.rPendEnd = this.rsam + i + 1; this.rStep = 1; this.rn = 0;
       }
     }
   }
+  // una trama de RNNoise en dos cuantos seguidos: 1) características, 2) red neuronal
   rnnRun() {
-    const r = this.rnn, x = this.rbuf;
-    this.rPend = false;
+    const r = this.rnn;
     if (!r.heap || r.heap.buffer !== r.e.memory.buffer) r.heap = new Float32Array(r.e.memory.buffer);
-    // independiente del nivel de grabación: RNNoise recibe la voz a un nivel parecido (seguidor de picos lento)
-    let e = 0; for (let j = 0; j < 480; j++) e += x[j] * x[j];
-    const lv = 10 * Math.log10(e / 480 / 1073741824 + 1e-12);
-    if (this.agcL === null) this.agcL = lv;
-    this.agcL += (lv - this.agcL) * (lv > this.agcL ? 0.2 : 0.01);
-    const g = Math.pow(10, Math.max(-20, Math.min(30, -20 - this.agcL)) / 20);
-    const H = r.heap, p = r.pin;
-    for (let j = 0; j < 480; j++) H[p + j] = x[j] * g;
-    const v = r.e.tbs_analyze(this.rst);
+    const H = r.heap;
+    if (this.rStep === 1) {
+      // independiente del nivel de grabación: RNNoise recibe la voz a un nivel parecido. El nivel se sigue
+      // solo cuando RNNoise ve voz; antes de la primera voz se supone que lo que suena es ruido 12 dB por debajo
+      const x = this.rbuf;
+      let e = 0; for (let j = 0; j < 480; j++) e += x[j] * x[j];
+      const lv = 10 * Math.log10(e / 480 / 1073741824 + 1e-12);
+      const sp = this.rvB > 0.6;
+      if (this.T.agcOld) { if (this.agcL === null) this.agcL = lv; this.agcL += (lv - this.agcL) * (lv > this.agcL ? 0.2 : 0.01); }
+      else if (this.agcL === null) this.agcL = lv + 12;
+      else if (!this.agcSp) {
+        if (sp) { this.agcSp = true; this.agcL = Math.max(lv, this.agcL - 12); }
+        else this.agcL += (lv + 12 - this.agcL) * 0.02;
+      } else if (sp || lv > this.agcL) this.agcL += (lv - this.agcL) * (lv > this.agcL ? 0.2 : 0.01);
+      const g = Math.pow(10, Math.max(-20, Math.min(30, -20 - this.agcL)) / 20);
+      for (let j = 0, p = r.pin; j < 480; j++, p++) H[p] = x[j] * g;
+      r.e.tbs_feat(this.rst);
+      this.rStep = 2;
+      return;
+    }
+    this.rStep = 0;
+    const v = r.e.tbs_net(this.rst);
+    const H2 = r.heap.buffer === r.e.memory.buffer ? H : (r.heap = new Float32Array(r.e.memory.buffer));
     this.rvA = this.rvB; this.rvB = v;
     const t = this.rgA; this.rgA = this.rgB; this.rgB = t;
-    this.rgB.set(r.heap.subarray(r.pg, r.pg + 22));
+    for (let j = 0, q = r.pg; j < 22; j++, q++) t[j] = H2[q];
     this.rEndA = this.rEndB; this.rEndB = this.rPendEnd;
   }
-  frameStep(amount) {
-    const mono = this.nch === 2 && this.diff >= N + RD;   // canales idénticos en toda la ventana y la línea de retardo
-    const nch = mono ? 1 : this.nch, win = this.win, f = this.frame, Y2 = this.Y2;
+  // primer cuanto de la trama: FFT de la ventana que acaba de llenarse y aprendizaje del ruido
+  analyze(amount) {
+    const mono = this.nch === 2 && this.diff >= this.LL;   // canales idénticos en toda la ventana y la línea de retardo
+    const nch = mono ? 1 : this.nch, wa = this.wa, f = this.frame, Y2 = this.Y2;
+    this.mono = mono; this.fEnd = this.rsam; this.amt = amount;
+    if (amount <= 0) {
+      // sin reducción: la trama sale tal cual (análisis × síntesis = Hann de 512, reconstrucción exacta) sin FFT
+      const hw = this.hw, o = N - SYN;
+      for (let c = 0; c < nch; c++) { const L = this.line[c], ob = this.out[c]; for (let j = 0; j < SYN; j++) ob[j] += L[o + j] * hw[j]; }
+      if (mono) this.out[1].set(this.out[0]);
+      return;
+    }
     Y2.fill(0);
     for (let c = 0; c < nch; c++) {
       const L = this.line[c];
-      for (let i = 0; i < N; i++) f[i] = L[i] * win[i];
+      for (let i = 0; i < N; i++) f[i] = L[i] * wa[i];
       this.fft.forward(f, this.re[c], this.im[c]);
       const re = this.re[c], im = this.im[c], w = 1 / nch;
       for (let k = 0; k < K; k++) Y2[k] += (re[k] * re[k] + im[k] * im[k]) * w;
     }
-    const G = this.G;
-    if (amount > 0) {
-      const learn = this.quiet >= N + RD; // con silencio digital en la ventana se congela lo aprendido
-      this.setAtt(amount);
-      this.hasGr = this.rnnPrep();
-      if (!this.ready && learn) this.init(Y2);
-      if (this.ready) {
-        if (learn) this.learn(Y2);
-        this.gain(Y2, amount);
-      } else G.fill(1);
-      this.rnnGain(G);
-      G[1] = Math.min(G[1], G[2]); G[0] = G[1]; G[K - 1] = G[K - 2];
-    } else G.fill(1);
+    const learn = this.quiet >= this.LL; // con silencio digital en la ventana se congela lo aprendido
+    this.setAtt(amount);
+    if (!this.ready && learn) this.init(Y2);
+    if (this.ready && learn) { this.hasGr = this.rnnPrep(this.fEnd - this.RD - 400); this.learn(Y2); }
+    if (this.ready) this.gainPrep(Y2);
+    this.pendB = true;
+  }
+  // segundo cuanto: ganancia (OM-LSA y RNNoise) y síntesis de la trama
+  synth() {
+    this.pendB = false;
+    const G = this.G, nch = this.mono ? 1 : this.nch;
+    if (this.ready) this.gain(this.Y2); else G.fill(1);
+    this.hasGr = this.rnnPrep(this.fEnd - this.RD - HOP);
+    this.rnnGain(G);
+    G[1] = Math.min(G[1], G[2]); G[0] = G[1]; G[K - 1] = G[K - 2];
+    this.spikes(G);
+    const f = this.frame, ws = this.ws, o = N - SYN;
     for (let c = 0; c < nch; c++) {
       const re = this.re[c], im = this.im[c];
       for (let k = 0; k < K; k++) { re[k] *= G[k]; im[k] *= G[k]; }
       this.fft.inverse(re, im, f);
-      const ob = this.out[c], s = this.ola;
-      for (let i = 0; i < N; i++) ob[i] += f[i] * win[i] * s;
+      const ob = this.out[c];
+      for (let j = 0; j < SYN; j++) ob[j] += f[o + j] * ws[j];
     }
-    if (mono) this.out[1].set(this.out[0]);
+    if (this.mono) this.out[1].set(this.out[0]);
+  }
+  // picos aislados (ruido musical): una casilla no sube mucho por encima de sus vecinas ni de lo que tenía
+  // en la trama anterior (la voz se sostiene en el tiempo o abarca varias casillas; un pitido de ruido, no)
+  spikes(G) {
+    const Gp = this.Gp, Gc = this.Gc, cap = this.capK;
+    if (!(cap > 0)) return;
+    Gc.set(G);
+    for (let k = 2; k < K - 2; k++) {
+      const g = Gc[k];
+      if (g < 4 * this.gmin) continue;
+      let c = 0.25 * (Gc[k - 2] + Gc[k - 1] + Gc[k + 1] + Gc[k + 2]);
+      const p = Gp[k - 1] > Gp[k + 1] ? Gp[k - 1] : Gp[k + 1];
+      if (Gp[k] > c) c = Gp[k];
+      if (p > c) c = p;
+      c *= cap;
+      if (g > c) G[k] = c;
+    }
+    Gp.set(G);
   }
   sm(Y2, k) {
     return (k <= 1 ? (2 * Y2[k] + Y2[k + 1]) / 3 : k === K - 1 ? (2 * Y2[k] + Y2[k - 1]) / 3 : 0.25 * Y2[k - 1] + 0.5 * Y2[k] + 0.25 * Y2[k + 1]) + 1e-20;
@@ -286,7 +379,6 @@ class Denoiser {
     }
     this.ready = true; this.frames = 0; this.learned = false;
   }
-  median(a, n) { const s = a.subarray(0, n); s.sort(); return s[n >> 1]; }
   learn(Y2) {
     const S = this.S, St = this.St, Smin = this.Smin, Stmp = this.Stmp, Stmin = this.Stmin, Sttmp = this.Sttmp;
     const I = this.I, lam = this.lam, lamb = this.lamb, as = this.as, Bmin = this.Bmin;
@@ -294,7 +386,7 @@ class Denoiser {
     const V = this.frames < this.start ? this.Vshort : this.Vlong;
     const cMin = this.cMin, cMax = this.cMax, Sf = this.Sf, af = this.af, fcur = this.fcur;
     // 1ª pasada: periodograma suavizado (tiempo y frecuencia) y sus mínimos
-    const SY = this.SY || (this.SY = new Float64Array(K));
+    const SY = this.SY;
     SY[0] = (2 * Y2[0] + Y2[1]) / 3 + 1e-20; SY[1] = (2 * Y2[1] + Y2[2]) / 3 + 1e-20; SY[K - 1] = (2 * Y2[K - 1] + Y2[K - 2]) / 3 + 1e-20;
     for (let k = 2; k < K - 1; k++) SY[k] = 0.25 * Y2[k - 1] + 0.5 * Y2[k] + 0.25 * Y2[k + 1] + 1e-20;
     for (let k = 0; k < K; k++) {
@@ -323,7 +415,7 @@ class Denoiser {
           const m = Math.min(a[0][k], a[1][k], a[2][k]), x = Math.max(b[0][k], b[1][k], b[2][k]);
           h1[n] = Bmin * m / lam[k]; h2[n] = x / m; n++;
         }
-        if (this.median(h1, n) > 3 && this.median(h2, n) < 2.512) relearn = true; // > +4,8 dB y variación < 4 dB
+        if (median(h1, n) > 3 && median(h2, n) < 2.512) relearn = true; // > +4,8 dB y variación < 4 dB
       }
     }
     if (relearn) {
@@ -387,80 +479,142 @@ class Denoiser {
       lamb[k] = lb; lam[k] = this.beta * lb + 1e-30;
     }
   }
-  gain(Y2, amount) {
-    const lam = this.lam, xi = this.xi, gam = this.gam, add = this.add, zeta = this.zeta, bz = this.bz, G = this.G;
-    const gmin = this.gmin, lgmin = this.lgmin;
+  // OM-LSA en dos partes: SNR a priori (dirigida por decisión) y su suavizado (en el cuanto del análisis)…
+  gainPrep(Y2) {
+    const lam = this.lam, xi = this.xi, gam = this.gam, add = this.add, zeta = this.zeta, bz = this.bz;
+    const ghPrev = this.ghPrev, y2Prev = this.y2Prev, ximin = this.ximin, add1 = 1 - add, bz1 = 1 - bz;
     for (let k = 0; k < K; k++) {
-      const g = Math.min((Y2[k] + 1e-20) / lam[k], 1e4);
+      const l = lam[k];
+      let g = (Y2[k] + 1e-20) / l; if (g > 1e4) g = 1e4;
       gam[k] = g;
-      const x = Math.max(add * this.ghPrev[k] * this.ghPrev[k] * this.y2Prev[k] / lam[k] + (1 - add) * (g > 1 ? g - 1 : 0), this.ximin);
+      const gp = ghPrev[k];
+      let x = add * gp * gp * y2Prev[k] / l + add1 * (g > 1 ? g - 1 : 0); if (x < ximin) x = ximin;
       xi[k] = x;
-      zeta[k] = bz * zeta[k] + (1 - bz) * x;
+      zeta[k] = bz * zeta[k] + bz1 * x;
     }
     // q̂ de OM-LSA: xi suavizado en frecuencia (local ±1, global ±10 casillas) y por trama
     const cum = this.cum, zl = this.zl, zg = this.zg;
     cum[0] = 0; for (let k = 0; k < K; k++) cum[k + 1] = cum[k] + zeta[k];
+    zl[0] = (2 * zeta[0] + zeta[1]) / 3; zl[K - 1] = (2 * zeta[K - 1] + zeta[K - 2]) / 3;
+    for (let k = 1; k < K - 1; k++) zl[k] = 0.25 * zeta[k - 1] + 0.5 * zeta[k] + 0.25 * zeta[k + 1];
     for (let k = 0; k < K; k++) {
-      zl[k] = k === 0 ? (2 * zeta[0] + zeta[1]) / 3 : k === K - 1 ? (2 * zeta[k] + zeta[k - 1]) / 3 : 0.25 * zeta[k - 1] + 0.5 * zeta[k] + 0.25 * zeta[k + 1];
       const a = k - 10 < 0 ? 0 : k - 10, b = k + 11 > K ? K : k + 11;
       zg[k] = (cum[b] - cum[a]) / (b - a);
     }
-    const zmin = this.zmin, zmax = this.zmax, lr = this.lr;
+    const zmin = this.zmin, zmax = this.zmax;
     const zf = (cum[K] - cum[3]) / (K - 3);
     let Pf = 0;
     if (zf > zmin) {
       if (zf > this.zfPrev) { Pf = 1; this.zpeak = Math.min(Math.max(zf, 1), 10); }
       else { const lo = this.zpeak * zmin, hi = this.zpeak * zmax; Pf = zf <= lo ? 0 : zf >= hi ? 1 : Math.log(zf / lo) / Math.log(hi / lo); }
     }
-    this.zfPrev = zf;
+    this.zfPrev = zf; this.Pf = Pf;
+  }
+  // …y probabilidad de voz y ganancia de cada casilla (en el cuanto de la síntesis)
+  gain(Y2) {
+    const xi = this.xi, gam = this.gam, zl = this.zl, zg = this.zg, G = this.G, ghPrev = this.ghPrev, y2Prev = this.y2Prev;
+    const gmin = this.gmin, lgmin = this.lgmin, qmax = this.qmax, zmin = this.zmin, zmax = this.zmax, ilr = 1 / this.lr, Pf = this.Pf;
+    const k0 = this.k0, kv = this.kv;
+    let ps = 0;
     for (let k = 0; k < K; k++) {
-      const a = zl[k], b = zg[k];
-      const Pl = a <= zmin ? 0 : a >= zmax ? 1 : Math.log(a / zmin) / lr;
-      const Pg = b <= zmin ? 0 : b >= zmax ? 1 : Math.log(b / zmin) / lr;
-      let q = 1 - Pl * Pg * Pf; if (q > this.qmax) q = this.qmax;
-      const x = xi[k], v = gam[k] * x / (1 + x);
-      const p = q <= 0 ? 1 : 1 / (1 + q / (1 - q) * (1 + x) * Math.exp(-Math.min(v, 60)));
-      let gh = x / (1 + x) * lsaExp(v); if (gh > 1) gh = 1;
-      this.ghPrev[k] = gh; this.y2Prev[k] = Y2[k];
-      let gg = p > 0.999 ? gh : p < 0.001 ? gmin : Math.exp(p * Math.log(gh > 1e-5 ? gh : 1e-5) + (1 - p) * lgmin);
+      let q = qmax;
+      if (Pf > 0) {
+        const a = zl[k], b = zg[k];
+        const Pl = a <= zmin ? 0 : a >= zmax ? 1 : Math.log(a / zmin) * ilr;
+        const Pg = b <= zmin ? 0 : b >= zmax ? 1 : Math.log(b / zmin) * ilr;
+        q = 1 - Pl * Pg * Pf; if (q > qmax) q = qmax;
+      }
+      const x = xi[k], x1 = 1 + x, v = gam[k] * x / x1;
+      const p = q <= 0 ? 1 : 1 / (1 + q / (1 - q) * x1 * texp(-v));
+      if (k >= k0 && k <= kv) ps += p;
+      let gh = x / x1 * lsaExp(v); if (gh > 1) gh = 1;
+      ghPrev[k] = gh; y2Prev[k] = Y2[k];
+      const gg = p > 0.999 ? gh : p < 0.001 ? gmin : texp(p * Math.log(gh > 1e-5 ? gh : 1e-5) + (1 - p) * lgmin);
       G[k] = gg < gmin ? gmin : gg;
     }
+    this.pv = ps / (kv - k0 + 1);   // probabilidad media de voz en 300 Hz – 4 kHz (para el compresor sin RNNoise)
   }
   // atenuación máxima según la intensidad (0..1 -> 0..30 dB)
   setAtt(amount) {
     const att = 30 * amount;
     if (att !== this.att) { this.att = att; this.gmin = Math.pow(10, -att / 20); this.lgmin = Math.log(this.gmin); }
   }
-  // RNNoise: ganancia por banda interpolada al centro de esta trama; se queda la menor de las dos
-  // (la trama STFT está centrada en rsam + 128 - RD - N/2; cada trama de RNNoise, 480 antes de su final)
-  // ganancias de RNNoise interpoladas al centro de esta trama (en this.Gr) y probabilidad de voz (this.vad)
-  rnnPrep() {
-    const center = this.rsam + 128 - RD - N / 2, cA = this.rEndA - 480, cB = this.rEndB - 480;
-    if (!this.rnn || cB - cA !== 480 || center - cB >= 480) return false;
-    let w = (center - cA) / 480; w = w < 0 ? 0 : w > 1 ? 1 : w;
+  // ganancias de RNNoise interpoladas al instante tc (en this.Gr) y probabilidad de voz (this.vad).
+  // Cada trama de RNNoise vale para la ventana de 960 muestras que acaba en rEnd (centro: rEnd − 480).
+  rnnPrep(tc) {
+    const cA = this.rEndA - 480, cB = this.rEndB - 480;
+    if (!this.rnn || cB - cA !== 480 || tc - cB >= 960) return false;
+    let w = (tc - cA) / 480; w = w < 0 ? 0 : w > 1 ? 1 : w;
     const gi = this.rgi, A = this.rgA, B = this.rgB;
     for (let i = 0; i < 22; i++) gi[i] = (1 - w) * A[i] + w * B[i];
-    this.vad = (1 - w) * (this.rvA || 0) + w * (this.rvB || 0);
-    const bi = this.rbi, bf = this.rbf, Gr = this.Gr || (this.Gr = new Float64Array(K));
+    this.vad = (1 - w) * this.rvA + w * this.rvB;
+    const bi = this.rbi, bf = this.rbf, Gr = this.Gr;
     for (let k = 0; k < K; k++) { const i = bi[k], t = bf[k]; Gr[k] = (1 - t) * gi[i] + t * gi[i + 1]; }
     return true;
   }
   rnnGain(G) {
     if (!this.hasGr) return;
     const Gr = this.Gr, gmin = this.gmin;
-    // pausa sin voz según RNNoise (con 10 ms de anticipación): se baja todo un poco más (teclas, golpes, roces)
+    // pausa sin voz según RNNoise: se baja todo un poco más (teclas, golpes, roces)
     const o = Math.min(1, Math.max(this.rvA, this.rvB) / 0.4);
     const tgt = 0.6 * this.att * (1 - o);
     this.pgDb = tgt < this.pgDb ? tgt : this.pgDb + (tgt - this.pgDb) * 0.03;
     const gx = this.pgDb > 0.05 ? Math.pow(10, -this.pgDb / 20) : 1;
     for (let k = 0; k < K; k++) {
-      let gr = Gr[k] < gmin ? gmin : Gr[k];
+      const gr = Gr[k] < gmin ? gmin : Gr[k];
       let g = G[k] < gr ? G[k] : gr;
       g *= gx;
       G[k] = g < gmin ? gmin : g;
     }
   }
+  // probabilidad de voz en lo que sale en este cuanto (para el compresor); −1 si no se sabe
+  vadOut() {
+    const t = this.rsam - this.lat - 64;
+    if (this.rnn && this.rEndB > -1e8 && t - (this.rEndB - 480) < 1440) {
+      const cA = this.rEndA - 480;
+      let w = (t - cA) / 480; w = w < 0 ? 0 : w > 1 ? 1 : w;
+      return (1 - w) * this.rvA + w * this.rvB;
+    }
+    return this.amt > 0 && this.ready ? this.pv : -1;
+  }
+}
 
+// ---------- igualar volumen ----------
+// Compresor guiado por la voz: el umbral va relativo al nivel medio de la voz (igual con una grabación
+// floja que con una fuerte) y la ganancia solo se mueve mientras se habla; en las pausas se queda en la
+// ganancia media de la voz, así el ruido que queda no sube respecto a la voz y sin voz no se amplifica nada.
+class Leveler {
+  constructor() {
+    this.e = 0; this.gr = 0; this.gDb = 0; this.Psp = 0; this.nS = 0; this.gNum = 0; this.gDen = 0;
+    this.cA = coef(2); this.cR = coef(60); this.kA = coef(4); this.kR = coef(180); this.kS = coef(3); this.kP = coef(150);
+  }
+  process(y, nch, comp, vad) {
+    let pq = 0;
+    for (let i = 0; i < 128; i++) { const m = nch === 2 ? 0.5 * (y[0][i] + y[1][i]) : y[0][i]; pq += m * m; }
+    pq /= 128;
+    const Lq = 10 * Math.log10(pq + 1e-12), lsp = this.nS ? 10 * Math.log10(this.Psp + 1e-12) : null;
+    let speech = vad >= 0 ? vad > 0.5 : (lsp === null ? Lq > -50 : Lq > lsp - 12);
+    if (speech && lsp !== null && Lq < lsp - 20) speech = false;
+    if (comp > 0.001 && speech && pq > 0) { this.nS++; const k = 1 / Math.min(this.nS, 750); this.Psp += (pq - this.Psp) * k; }
+    const on = this.nS > 0 && comp > 0.001;
+    const T = on ? 10 * Math.log10(this.Psp + 1e-12) + 4 - 8 * comp : 0, s = 1 - 1 / (1 + 5 * comp), B = 12 * comp;
+    const tP = this.gDen > 0 && comp > 0.001 ? 10 * Math.log10(this.gNum / this.gDen) : 0;
+    const cA = this.cA, cR = this.cR, kA = this.kA, kR = this.kR, kG = speech ? this.kS : this.kP;
+    let e = this.e, gr = this.gr, gDb = this.gDb, g2 = 0;
+    for (let i = 0; i < 128; i++) {
+      const m = nch === 2 ? 0.5 * (y[0][i] + y[1][i]) : y[0][i], m2 = m * m;
+      e += (m2 - e) * (m2 > e ? cA : cR);
+      let r = 0;
+      if (on) { const over = 10 * Math.log10(e + 1e-12) - T; r = over <= -4 ? 0 : over >= 4 ? over * s : (over + 4) * (over + 4) / 16 * s; }
+      gr += (r - gr) * (r > gr ? kA : kR);
+      gDb += ((speech && on ? B - gr : tP) - gDb) * kG;
+      const g = Math.exp(gDb * 0.11512925464970229);
+      g2 += g * g;
+      for (let c = 0; c < nch; c++) y[c][i] *= g;
+    }
+    this.e = e; this.gr = gr; this.gDb = gDb;
+    if (speech && on) { const k = 1 / Math.min(this.nS, 750); this.gNum += (pq * g2 / 128 - this.gNum) * k; this.gDen += (pq - this.gDen) * k; }
+  }
 }
 
 // ---------- de-esser ----------
@@ -486,12 +640,14 @@ class VoiceProcessor extends AudioWorkletProcessor {
     return [
       { name: 'gate', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },   // reducir ruido de fondo
       { name: 'deess', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+      { name: 'comp', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },   // igualar volumen
     ];
   }
   constructor(options) {
     super();
     const o = (options && options.processorOptions) || {};
-    this.nr = new Denoiser(o.rnnoise);
+    this.nr = new Denoiser(o.rnnoise, o.tune);
+    this.lev = new Leveler();
     this.tmp = [new Float32Array(128), new Float32Array(128)];
     this.lpC = biquad('lp', 5200, 0.707);
     this.bpC = biquad('bp', 7200, 1.1);
@@ -503,9 +659,10 @@ class VoiceProcessor extends AudioWorkletProcessor {
   }
   process(inputs, outputs, params) {
     const inp = inputs[0] || [], out = outputs[0];
-    const gate = params.gate[0], deess = params.deess[0];
+    const gate = params.gate[0], deess = params.deess[0], comp = params.comp[0];
     const y = this.tmp;
     // 1) reducción de ruido (salida retrasada una cantidad fija: VOICE_LATENCY muestras)
+    this.nr.vadWanted = comp > 0.001;
     this.nr.process(inp, inp.length, gate, y);
     const nch = Math.max(1, Math.min(inp.length, 2));
     // 2) de-esser: si la banda de las eses domina, se baja solo la parte aguda
@@ -528,6 +685,8 @@ class VoiceProcessor extends AudioWorkletProcessor {
         out[c][i] = lo + this.gDe * (x - lo);
       }
     }
+    // 3) igualar volumen (después de quitar el ruido)
+    if (comp > 0.001 || Math.abs(this.lev.gDb) > 0.01) this.lev.process(out, nch, comp, this.nr.vadOut());
     // entrada mono → salida estéreo
     for (let c = nch; c < out.length; c++) out[c].set(out[0]);
     return true;
