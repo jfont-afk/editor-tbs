@@ -19,17 +19,24 @@ export const hasFx = (fx) => !!fx && KEYS.some(k => Math.abs(fx[k] || 0) > 1e-3)
 export const hasFades = (fx) => !!fx && ((fx.fadeIn || 0) > 0.01 || (fx.fadeOut || 0) > 0.01);
 export const isVozClara = (fx) => !!fx && KEYS.every(k => Math.abs((fx[k] || 0) - VOZ_CLARA[k]) < 1e-3);
 
-// Retraso fijo del procesador de voz (reducción de ruido por STFT + tramas de RNNoise), en muestras.
-// Al exportar se compensa (las fuentes que pasan por él empiezan antes); en la vista previa son ~29 ms.
-export const VOICE_LATENCY = 1376;
+// Retraso fijo del procesador de voz (reducción de ruido por STFT + tramas de RNNoise), en muestras,
+// y el del compresor (DynamicsCompressor mira 6 ms por delante). Al exportar se compensan (las fuentes
+// que pasan por la cadena empiezan antes); en la vista previa el sonido va ~35 ms por detrás de la imagen.
+export const VOICE_LATENCY = 1408;
+export const COMP_DELAY = 0.006;
 
 const WORKLET_URL = new URL('./voice-worklet.js', import.meta.url).href;
-const RNNOISE_URL = new URL('../vendor/rnnoise.wasm', import.meta.url).href;
+// RNNoise (red neuronal de Xiph): versión con WebAssembly SIMD y, si el navegador no la admite, la normal
+const RNNOISE_URLS = ['../vendor/rnnoise.wasm', '../vendor/rnnoise-nosimd.wasm'].map(u => new URL(u, import.meta.url).href);
 let rnnoise = null;
-// RNNoise (red neuronal de Xiph) se descarga una vez; cada nodo recibe los bytes y el worklet lo compila una vez por contexto
+// se descarga una vez; cada nodo recibe los bytes y el worklet lo compila una vez por contexto
 function loadRnnoise() {
-  if (!rnnoise) rnnoise = fetch(RNNOISE_URL).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-    .then(b => (WebAssembly.validate(b) ? b : null)).catch((e) => { console.warn('rnnoise', e); return null; });
+  if (!rnnoise) rnnoise = (async () => {
+    for (const u of RNNOISE_URLS) {
+      try { const r = await fetch(u); if (r.ok) { const b = await r.arrayBuffer(); if (WebAssembly.validate(b)) return b; } } catch (e) { console.warn('rnnoise', e); }
+    }
+    return null;
+  })();
   return rnnoise;
 }
 const loaded = new WeakMap();
@@ -69,7 +76,7 @@ export class FxChain {
     this.air = ctx.createBiquadFilter(); this.air.type = 'highshelf'; this.air.frequency.value = 9000;
     this.voice = null;
     if (worklet) { try { this.voice = new AudioWorkletNode(ctx, 'tbs-voice', { outputChannelCount: [2], processorOptions: { rnnoise: worklet.rnnoise || null } }); } catch (e) { console.warn(e); } }
-    this.latency = this.voice ? VOICE_LATENCY / ctx.sampleRate : 0;   // s
+    this.latency = (this.voice ? VOICE_LATENCY / ctx.sampleRate : 0) + COMP_DELAY;   // s (lo que tarda en salir lo que entra)
     this.comp = ctx.createDynamicsCompressor();
     this.comp.knee.value = 8; this.comp.attack.value = 0.004; this.comp.release.value = 0.18;
     this.makeup = ctx.createGain();
