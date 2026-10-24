@@ -284,7 +284,7 @@ class Denoiser {
       this.lamb[k] = s * 1e-3; this.lam[k] = this.beta * this.lamb[k];
       this.ghPrev[k] = 1; this.y2Prev[k] = Y2[k]; this.zeta[k] = this.ximin; this.xi[k] = this.ximin;
     }
-    this.ready = true; this.frames = 0;
+    this.ready = true; this.frames = 0; this.learned = false;
   }
   median(a, n) { const s = a.subarray(0, n); s.sort(); return s[n >> 1]; }
   learn(Y2) {
@@ -336,7 +336,7 @@ class Denoiser {
         this.fcur[k] = this.fmin[k] = m; Sf[k] = S[k];
       }
       for (let j = 0; j < 8; j++) this.fwin[j].fill(Infinity);
-      this.frames = 1; this.vc = 0;
+      this.frames = 1; this.vc = 0; this.learned = true;
     }
     for (let k = 0; k < K; k++) {
       const d = Bmin * Smin[k];
@@ -364,8 +364,9 @@ class Denoiser {
     }
     // probabilidad de voz (IMCRA) y promedio del ruido, con techos: +3 dB sobre el mínimo reciente
     // y ~12 dB sobre el suelo de 2 s (armónicos sostenidos, voces muy monótonas)
-    // (tras el arranque) donde RNNoise ve voz no se aprende ruido: evita que una voz grave y sostenida se tome por ruido
-    const ad = this.ad, add = this.add, fmin = this.fmin, capA = 2 * Bmin, Gr = this.hasGr && this.frames >= this.start ? this.Gr : null;
+    // ya aprendido (tras el arranque o un salto), donde RNNoise ve voz no se aprende ruido: una voz grave y sostenida no se toma por ruido
+    if (this.frames >= this.start) this.learned = true;
+    const ad = this.ad, add = this.add, fmin = this.fmin, capA = 2 * Bmin, Gr = this.hasGr && this.learned ? this.Gr : null;
     for (let k = 0; k < K; k++) {
       const yv = Y2[k] + 1e-20, d = Bmin * Stmin[k];
       const gmn = yv / d, z = S[k] / d;
