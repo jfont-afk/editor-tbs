@@ -13,19 +13,19 @@ const coef = (ms) => 1 - Math.exp(-1 / (sampleRate * ms / 1000));
 const D0 = -0;
 
 // ---------- Reducción de ruido ----------
-// STFT de 1024 muestras con salto de 256 y ventanas asimétricas de bajo retardo (Mauler y Martin, 2011):
-// la de análisis sube despacio y cae en las últimas 256 muestras (resolución de 47 Hz, separa los armónicos
-// de la voz) y la de síntesis solo ocupa las últimas 512; análisis × síntesis = Hann de 512, que con salto
-// de 256 reconstruye exacto. Retardo: 512 muestras + 256 para que RNNoise llegue a tiempo = 768 (16 ms a 48 kHz;
-// fx.js: VOICE_LATENCY), así la voz va en sincronía con la imagen en la vista previa.
+// STFT de 1024 muestras con salto de 384 y ventanas asimétricas de bajo retardo (Mauler y Martin, 2011):
+// la de análisis sube despacio y cae en las últimas 384 muestras (resolución de 47 Hz, separa los armónicos
+// de la voz) y la de síntesis solo ocupa las últimas 768; análisis × síntesis = Hann de 768, que con salto
+// de 384 reconstruye exacto. Retardo: 768 muestras (16 ms a 48 kHz; fx.js: VOICE_LATENCY), así la voz va en
+// sincronía con la imagen en la vista previa.
 // Ruido estimado con IMCRA (Cohen 2003: mínimos suavizados en dos pasadas y promedio controlado por la
 // probabilidad de voz) con techos por mínimos para no confundir la voz con ruido, detector de subidas
 // bruscas (cambio de plano) y ganancia OM-LSA (log-espectral con probabilidad de voz y suelo).
 // En paralelo, RNNoise (red neuronal de Xiph, 22 bandas) da otra ganancia por banda: se aplica la menor
 // de las dos, así el ruido no estacionario (tráfico, gente, golpes) también baja y el arranque es inmediato.
-// El trabajo de cada trama se reparte en dos cuantos de 128 muestras (análisis y aprendizaje en uno,
-// ganancia y síntesis en el siguiente) y cada trama de RNNoise en dos más: sin picos de CPU.
-const N = 1024, HOP = 256, K = N / 2 + 1, SYN = 2 * HOP;
+// El trabajo de cada trama se reparte en los tres cuantos de 128 muestras de cada salto (análisis y aprendizaje,
+// ganancia y síntesis, y uno libre) y cada trama de RNNoise en dos: sin picos de CPU.
+const N = 1024, HOP = 384, K = N / 2 + 1, SYN = 2 * HOP;
 // La ganancia se calcula por casilla hasta 8 kHz, por parejas hasta 16 kHz y de cuatro en cuatro por encima (ahí la
 // voz no tiene armónicos que separar): 299 bandas en vez de 513 casillas, casi el mismo resultado con menos cálculo
 const BAND = new Int32Array(K);
@@ -165,8 +165,8 @@ class Denoiser {
       const n = N - SYN + j, h = 0.5 - 0.5 * Math.cos(2 * Math.PI * j / SYN);
       this.hw[j] = h; this.ws[j] = n >= A ? this.wa[n] : h / this.wa[n];
     }
-    // retardo extra de 256 muestras: las tramas de RNNoise (que miran 10 ms por delante) llegan a tiempo a la síntesis
-    this.RD = 256; this.LL = N + this.RD; this.lat = SYN + this.RD;
+    // sin retardo extra (RD): la síntesis ya va 384 muestras por detrás de la trama, donde llegan las de RNNoise
+    this.RD = 0; this.LL = N + this.RD; this.lat = SYN + this.RD;
     this.nch = 0; this.line = []; this.out = []; this.re = []; this.im = [];
     this.frame = new Float64Array(N);
     this.Y2 = new Float64Array(K); this.Yb = F(); this.G = F().fill(1); this.Gk = new Float64Array(K).fill(1); this.Gp = F().fill(1); this.Gc = F();
@@ -204,7 +204,7 @@ class Denoiser {
     if (this.rnn) {
       this.rst = r.e.tbs_create();
       this.racc = new Float32Array(480); this.rbuf = new Float32Array(480); this.rn = 0; this.rStep = 0; this.rPendEnd = 0;
-      this.rEndA = -1e9; this.rEndB = -1e9; this.rCount = 0; this.rvA = D0; this.rvB = D0; this.agcL = D0; this.agcOn = false; this.agcSp = false; this.pgDb = D0;
+      this.rEndA = -1e9; this.rEndB = -1e9; this.rCount = 0; this.rvA = D0; this.rvB = D0; this.agcL = D0; this.agcN = D0; this.agcOn = false; this.agcSp = false; this.pgDb = D0;
       this.rgA = new Float32Array(22).fill(1); this.rgB = new Float32Array(22).fill(1); this.rgi = new Float64Array(22);
       this.Gr = F();
     }
@@ -246,6 +246,9 @@ class Denoiser {
       this.diff = same ? this.diff + 128 : 0;
     }
     this.quiet = nz ? this.quiet + 128 : 0;          // muestras seguidas con señal
+    // vuelve el sonido tras silencio digital (empieza un clip, con su fundido corto): RNNoise empieza 10 ms después,
+    // si no toma la subida por el comienzo de una voz y deja pasar el ruido un buen rato
+    if (nz && this.idle >= 480 && this.rnn) { this.rn = -480; this.rStep = 0; }
     this.idle = nz ? 0 : this.idle + 128;           // muestras seguidas de silencio digital
     const on = amount > 0.001;
     let stepA = false;
@@ -269,6 +272,7 @@ class Denoiser {
   rnnFeed() {
     const nch = this.nch === 2 && this.diff >= 128 ? 1 : this.nch, o = this.LL - 128, acc = this.racc, w = 32768 / nch;
     for (let i = 0; i < 128; i++) {
+      if (this.rn < 0) { this.rn++; continue; }
       let m = 0;
       for (let c = 0; c < nch; c++) m += this.line[c][o + i];
       acc[this.rn++] = m * w;
@@ -291,12 +295,21 @@ class Denoiser {
       let e = 0; for (let j = 0; j < 480; j++) e += x[j] * x[j];
       const lv = 10 * Math.log10(e / 480 / 1073741824 + 1e-12);
       const sp = this.rvB > 0.6;
+      if (e >= 1e-6) this.agcN = !this.agcOn || lv < this.agcN ? lv : this.agcN + 0.05;   // suelo (mínimo, sube 5 dB/s)
       if (e < 1e-6) { /* silencio digital (antes del clip, pausa del vídeo): no cuenta */ }
       else if (!this.agcOn) { this.agcOn = true; this.agcL = lv + 12; }
       else if (!this.agcSp) {
-        if (sp) { this.agcSp = true; this.agcL = Math.max(lv, this.agcL - 12); }
-        else this.agcL += (lv + 12 - this.agcL) * 0.1;
+        // aún sin voz: el nivel supuesto sube enseguida con el ruido (el arranque del clip llega con un fundido corto)
+        // y solo se pasa a seguir la voz cuando RNNoise ve voz que asoma sobre ese ruido
+        if (sp && lv > this.agcL - 6) { this.agcSp = true; this.agcL = Math.max(lv, this.agcL - 12); }
+        else this.agcL = Math.max(this.agcL + (lv + 12 - this.agcL) * 0.1, lv + 12);
       } else if (sp || lv > this.agcL) this.agcL += (lv - this.agcL) * (lv > this.agcL ? 0.2 : 0.01);
+      else {
+        // sin voz baja despacio hacia lo que suena, pero no más de 22 dB sobre el suelo de ruido: en una grabación
+        // limpia las colas de reverberación siguen siendo voz; con ruido, el ruido no se presenta como si fuera voz
+        const t = Math.max(lv, this.agcN + 22);
+        if (t < this.agcL) this.agcL += (t - this.agcL) * 0.01;
+      }
       if (!this.agcOn) this.agcL = lv + 12;
       const g = Math.pow(10, Math.max(-20, Math.min(30, -20 - this.agcL)) / 20);
       for (let j = 0, p = r.pin; j < 480; j++, p++) H[p] = x[j] * g;
@@ -321,7 +334,7 @@ class Denoiser {
     const nch = mono ? 1 : this.nch, wa = this.wa, f = this.frame, Y2 = this.Y2;
     this.mono = mono; this.fEnd = this.rsam; this.amt = amount;
     if (amount <= 0) {
-      // sin reducción: la trama sale tal cual (análisis × síntesis = Hann de 512, reconstrucción exacta) sin FFT
+      // sin reducción: la trama sale tal cual (análisis × síntesis = Hann de 768, reconstrucción exacta) sin FFT
       const hw = this.hw, o = N - SYN;
       for (let c = 0; c < nch; c++) { const L = this.line[c], ob = this.out[c]; for (let j = 0; j < SYN; j++) ob[j] += L[o + j] * hw[j]; }
       if (mono) this.out[1].set(this.out[0]);
@@ -438,20 +451,21 @@ class Denoiser {
       const fmin = this.fmin, fw = this.fwin;
       for (let k = 0; k < NB; k++) { let m = fw[0][k]; for (let j = 1; j < 8; j++) if (fw[j][k] < m) m = fw[j][k]; fmin[k] = m; }
     }
-    // subida brusca: el mínimo de los últimos ~0,3 s supera claramente lo estimado y el espectro es estable
-    // (en el arranque se mira cada 0,1 s y con +3 dB: el ruido de un clip que empieza sin voz se fija enseguida)
+    // arranque: si el mínimo de los últimos 0,1–0,3 s queda por encima de lo estimado y el espectro es estable, el
+    // ruido se fija de golpe (un clip que empieza sin voz aprende enseguida). Más tarde no se hace: con tráfico, un
+    // coche que pasa parecía un cambio de plano y el ruido estimado se quedaba alto tapando la voz
     let relearn = false;
     if (++this.shc >= this.shV) {
       this.shc = 0; const i = this.shI; this.shI = (i + 1) % 3;
       this.shMin[i].set(cMin); cMin.fill(Infinity); this.shMax[i].set(cMax); cMax.fill(0);
       const st = this.boot && this.frames < this.start;
-      if (this.frames > this.shV * (st ? 1 : 3)) {
+      if (st && this.frames > this.shV) {
         const h1 = this.h1, h2 = this.h2, a = this.shMin, b = this.shMax; let n = 0;
         for (let k = this.k0; k <= this.k1; k++) {
           const m = Math.min(a[0][k], a[1][k], a[2][k]), x = Math.max(b[0][k], b[1][k], b[2][k]);
           h1[n] = Bmin * m / lam[k]; h2[n] = x / m; n++;
         }
-        if (median(h1, n) > (st ? 1 : 3) && median(h2, n) < 2.512) relearn = true; // > +4,8 dB (al arrancar, que no esté por debajo) y variación < 4 dB
+        if (median(h1, n) > 1 && median(h2, n) < 2.512) relearn = true; // no por debajo de lo estimado y variación < 4 dB
       }
     }
     if (relearn) {
@@ -594,13 +608,19 @@ class Denoiser {
   rnnGain(G) {
     if (!this.hasGr) return;
     const Gr = this.Gr, gmin = this.gmin;
+    // grabación limpia (el suelo queda más de 45 dB por debajo de la voz): no hay ruido que quitar y RNNoise se
+    // comería las colas de la reverberación de la sala; se deja de usar poco a poco (del todo a 55 dB)
+    let w = this.agcSp ? (this.agcL - this.agcN - 45) / 10 : 0;
+    w = w < 0 ? 0 : w > 1 ? 1 : w;
     // pausa sin voz según RNNoise: se baja todo un poco más (teclas, golpes, roces)
     const o = Math.min(1, Math.max(this.rvA, this.rvB) / 0.4);
-    const tgt = 0.6 * this.att * (1 - o);
+    const tgt = 0.6 * this.att * (1 - o) * (1 - w);
     this.pgDb = tgt < this.pgDb ? tgt : this.pgDb + (tgt - this.pgDb) * 0.03;
+    if (w >= 1 && this.pgDb < 0.05) return;
     const gx = this.pgDb > 0.05 ? Math.pow(10, -this.pgDb / 20) : 1;
     for (let k = 0; k < NB; k++) {
-      const gr = Gr[k] < gmin ? gmin : Gr[k];
+      let gr = Gr[k] + w * (1 - Gr[k]);
+      if (gr < gmin) gr = gmin;
       let g = G[k] < gr ? G[k] : gr;
       g *= gx;
       G[k] = g < gmin ? gmin : g;
