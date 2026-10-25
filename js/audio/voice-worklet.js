@@ -299,10 +299,12 @@ class Denoiser {
       if (e < 1e-6) { /* silencio digital (antes del clip, pausa del vídeo): no cuenta */ }
       else if (!this.agcOn) { this.agcOn = true; this.agcL = lv + 12; }
       else if (!this.agcSp) {
-        // aún sin voz: el nivel supuesto sube enseguida con el ruido (el arranque del clip llega con un fundido corto)
-        // y solo se pasa a seguir la voz cuando RNNoise ve voz que asoma sobre ese ruido
-        if (sp && lv > this.agcL - 6) { this.agcSp = true; this.agcL = Math.max(lv, this.agcL - 12); }
-        else this.agcL = Math.max(this.agcL + (lv + 12 - this.agcL) * 0.1, lv + 12);
+        // aún sin voz: lo que suena se toma como ruido 12 dB por debajo de la voz, y en cuanto RNNoise ve voz se pasa
+        // a seguirla (si además se exige que asome sobre ese ruido, un clip que empieza hablando tarda en cambiar y
+        // RNNoise recibe la voz 12 dB baja y la recorta). El fundido corto del comienzo del clip no engaña al nivel:
+        // RNNoise empieza 10 ms después de que vuelva el sonido
+        if (sp) { this.agcSp = true; this.agcL = Math.max(lv, this.agcL - 12); }
+        else this.agcL += (lv + 12 - this.agcL) * 0.1;
       } else if (sp || lv > this.agcL) this.agcL += (lv - this.agcL) * (lv > this.agcL ? 0.2 : 0.01);
       else {
         // sin voz baja despacio hacia lo que suena, pero no más de 22 dB sobre el suelo de ruido: en una grabación
