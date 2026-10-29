@@ -266,7 +266,7 @@ function GroupInspector({ gid }) {
 
 function Help() {
   const p = state.project;
-  const keys = [['Espacio', 'Reproducir / pausa'], ['S', 'Cortar en el cursor'], ['Q / W', 'Recortar inicio / final'], ['Supr', 'Eliminar selección'], ['Ctrl + D', 'Duplicar selección'], ['Alt + arrastrar', 'Duplicar en la línea de tiempo'], ['Ctrl + C / V', 'Copiar / pegar en el cursor'], ['← →', 'Fotograma a fotograma'], ['Mayús + ← →', 'Saltar 1 segundo'], ['Ctrl + Z / Y', 'Deshacer / rehacer'], ['Ctrl + rueda', 'Zoom de la línea de tiempo']];
+  const keys = [['Espacio', 'Reproducir / pausa'], ['S', 'Cortar en el cursor'], ['Q / W', 'Recortar inicio / final'], ['Supr', 'Eliminar selección'], ['A', 'Comparar audio original / corregido'], ['Ctrl + D', 'Duplicar selección'], ['Alt + arrastrar', 'Duplicar en la línea de tiempo'], ['Ctrl + C / V', 'Copiar / pegar en el cursor'], ['← →', 'Fotograma a fotograma'], ['Mayús + ← →', 'Saltar 1 segundo'], ['Ctrl + Z / Y', 'Deshacer / rehacer'], ['Ctrl + rueda', 'Zoom de la línea de tiempo']];
   return html`
     <div class="insp-empty">
       <div class="ie-icon"><${Icon} name="move" /></div>

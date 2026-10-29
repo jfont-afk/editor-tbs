@@ -69,6 +69,7 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (k === ' ') { e.preventDefault(); player.toggle(); }
   else if (k === 's') { e.preventDefault(); A.splitAtPlayhead(); }
+  else if (k === 'a') { e.preventDefault(); A.toggleAudioOriginal(); }
   else if (k === 'q') { e.preventDefault(); A.trimPlayhead('in'); }
   else if (k === 'w') { e.preventDefault(); A.trimPlayhead('out'); }
   else if (k === 'delete' || k === 'backspace') { e.preventDefault(); A.deleteSelection(); }

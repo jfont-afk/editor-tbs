@@ -6,6 +6,8 @@ import { state, setUI } from '../core/store.js';
 import { cloud } from '../core/cloud.js';
 import { Icon } from './icons.js';
 
+// cambia en cada publicación: sirve para comprobar que el navegador tiene la última versión
+export const EDITOR_VERSION = '29-10-2026 · audio 3';
 export const GUIDE_URL = '/docs/guia-editor-tbs.pdf';
 const VERSION = '1';
 const lsKey = () => 'tbs_tour:' + (cloud.user?.id || 'local');
@@ -131,7 +133,7 @@ export function HelpMenu() {
   return html`<div class="pmenu">
     <button class=${'btn icon ghost help-btn' + (open ? ' on' : '')} title="Ayuda: tutorial y guía" onClick=${() => setOpen(!open)}>?</button>
     ${open && html`<div class="pm-pop right" onMouseLeave=${() => setOpen(false)}>
-      <div class="pm-status"><b>¿Dudas?</b> Repite el recorrido por el editor o abre la guía con capturas de cada herramienta.</div>
+      <div class="pm-status"><b>¿Dudas?</b> Repite el recorrido por el editor o abre la guía con capturas de cada herramienta.<br /><span class="dim small">Versión del editor: ${EDITOR_VERSION}</span></div>
       <button onClick=${() => { setOpen(false); startTour(); }}><${Icon} name="play" />Ver el tutorial</button>
       <a class="pm-link" href=${GUIDE_URL} target="_blank" rel="noopener"><${Icon} name="download" />Guía del editor (PDF)</a>
     </div>`}

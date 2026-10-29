@@ -141,6 +141,7 @@ export async function syncAudioClip(id) {
   update(pp => {
     const cc = pp.audio.find(x => x.id === id);
     if (lag >= 0) { cc.start = lag; cc.in = 0; } else { cc.start = 0; cc.in = -lag; }
+    cc.voice = true; // es la misma voz que la cámara (micro externo): Voz clara también se le aplica
     cc.out = Math.max(cc.in + 0.5, cc.out);
   });
   player.resyncAudio();
@@ -335,10 +336,24 @@ export function setAudioFx(id, patch, key) {
   updateAudio(id, c => ({ fx: { ...(c.fx || {}), ...patch } }), key && 'afx' + key + id);
 }
 // Los mismos ajustes (sin los fundidos, que son de cada clip) en todos los clips del vídeo
+// Audios de la pista de audio que son voz (micro externo sincronizado o "usar solo este audio"), no música
+export const voiceTracks = (p) => (p.audio || []).filter(a => a.voice || (p.muted && !(a.fx?.duck > 0)));
+
+// Los mismos ajustes (sin los fundidos, que son de cada clip) en todos los clips del vídeo y en la voz de la pista de audio
 export function applyFxToAllClips(fx) {
   const { fadeIn, fadeOut, duck, ...rest } = fx || {};
-  update(p => { for (const c of p.clips) c.fx = { ...(c.fx || {}), ...rest }; });
-  toast('Ajustes de audio aplicados a todos los clips');
+  update(p => {
+    for (const c of p.clips) c.fx = { ...(c.fx || {}), ...rest };
+    for (const a of voiceTracks(p)) a.fx = { ...(a.fx || {}), ...rest };
+  });
+  toast('Ajustes de audio aplicados a todo el vídeo');
+}
+
+// Comparar al reproducir: sonido original (sin corregir) ↔ corregido
+export function toggleAudioOriginal() {
+  const orig = !state.ui.audioOrig;
+  setUI({ audioOrig: orig });
+  toast(orig ? 'Escuchando el ORIGINAL (sin corregir) · pulsa A para volver' : 'Escuchando el audio CORREGIDO', 'ok', 1800);
 }
 
 // Copia del clip justo detrás del original, o en la posición "toIndex" (Alt + arrastrar)

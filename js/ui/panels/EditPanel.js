@@ -6,7 +6,7 @@ import * as A from '../../core/actions.js';
 import { timelineWords } from '../../core/captions.js';
 import { isFiller } from '../../media/takes.js';
 import { player, timeBus } from '../../engine/player.js';
-import { VOZ_CLARA, NEUTRAL, isVozClara } from '../../audio/fx.js';
+import { VOZ_CLARA, NEUTRAL, isVozClara, hasFx, normFx } from '../../audio/fx.js';
 
 function Silences() {
   const p = state.project;
@@ -44,11 +44,15 @@ function Silences() {
 function VoiceAll() {
   const p = state.project;
   if (!p.clips.length) return html`<div class="note">Importa un vídeo para mejorar su audio.</div>`;
-  const all = p.clips.every(c => isVozClara(c.fx));
+  const voice = A.voiceTracks(p);
+  const all = p.clips.every(c => isVozClara(normFx(c.fx))) && voice.every(a => isVozClara(normFx(a.fx)));
+  const any = p.clips.some(c => hasFx(normFx(c.fx))) || voice.some(a => hasFx(normFx(a.fx)));
+  const orig = !!state.ui.audioOrig;
   return html`<div class="stack">
     <${Btn} cls=${all ? 'primary' : 'fluor'} icon=${all ? 'check' : 'mic'} onClick=${() => A.applyFxToAllClips(all ? NEUTRAL : VOZ_CLARA)}>Voz clara en todo el vídeo</${Btn}>
-    <div class="dim small">${all ? 'Activada en todos los clips. Pulsa otra vez para quitarla.' : 'Quita retumbe y ruido de fondo, suaviza las eses, da presencia a la voz e iguala el volumen. Se oye al reproducir.'}${' '}
-      Para afinar (ruido, eses, presencia, fundidos) selecciona un clip y abre <b>Corrección de audio</b> en Propiedades. La música de la pista de audio puede bajar sola cuando hablas.</div>
+    ${any && html`<${Btn} cls=${orig ? 'primary' : ''} icon=${orig ? 'volume' : 'mic'} onClick=${A.toggleAudioOriginal}>${orig ? 'Oyendo el ORIGINAL · volver al corregido' : 'Comparar: escuchar el original'}<span class="kbd">A</span></${Btn}>`}
+    <div class="dim small">${all ? 'Activada en todo el vídeo' + (voice.length ? ' (también en la voz de la pista de audio)' : '') + '. Reproduce y pulsa A para comparar con el original.' : 'Quita el ruido de fondo y el retumbe, suaviza las eses, da presencia a la voz e iguala el volumen. Se oye al reproducir.'}${' '}
+      Para afinar selecciona un clip y abre <b>Corrección de audio</b> en Propiedades. Si la voz va en la pista de audio (micro externo), pulsa antes <b>Sincronizar</b> o <b>Usar solo este audio</b>.</div>
   </div>`;
 }
 
@@ -171,8 +175,8 @@ export function EditPanel() {
           <${Btn} icon="trimR" kbd="W" onClick=${() => A.trimPlayhead('out')}>Final aquí</${Btn}>
         </div>
       </${Section}>
-      <${Section} collapsible open=${true} icon="silence" title="Quitar silencios"><${Silences} /></${Section}>
       <${Section} collapsible open=${true} icon="mic" title="Mejorar el audio"><${VoiceAll} /></${Section}>
+      <${Section} collapsible open=${true} icon="silence" title="Quitar silencios"><${Silences} /></${Section}>
       <${Section} collapsible open=${false} icon="user" title="Encuadre de la cabeza" hint="TikTok"><${HeadFrame} /></${Section}>
       <${Section} collapsible open=${false} icon="repeat" title="Tomas repetidas y muletillas"><${Takes} /></${Section}>
       <${Section} collapsible open=${false} icon="zap" title="Ritmo y transiciones">

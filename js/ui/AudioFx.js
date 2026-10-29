@@ -2,6 +2,7 @@ import { html } from '../lib.js';
 import { state, setUI } from '../core/store.js';
 import { Btn, Slider, Toggle } from './controls.js';
 import { VOZ_CLARA, NEUTRAL, isVozClara, hasFx, normFx } from '../audio/fx.js';
+import { toggleAudioOriginal } from '../core/actions.js';
 
 const db = (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' dB';
 const pct = (v) => (v < 0.005 ? 'No' : Math.round(v * 100) + '%');
@@ -19,7 +20,7 @@ export function AudioFixes({ fx, set: save, track = false, applyAll }) {
   return html`<div class="stack">
     <div class="row" style="gap:6px">
       <${Btn} cls=${'grow ' + (voz ? 'primary' : 'fluor')} icon=${voz ? 'check' : 'mic'} onClick=${() => set(voz ? NEUTRAL : VOZ_CLARA)}>${voz ? 'Voz clara activada' : 'Voz clara'}</${Btn}>
-      ${hasFx(f) && html`<${Btn} cls=${'sm' + (orig ? ' primary' : '')} title="Escucha el sonido sin corregir para comparar" onClick=${() => setUI({ audioOrig: !orig })}>${orig ? 'Oyendo el original' : 'Comparar'}</${Btn}>`}
+      ${hasFx(f) && html`<${Btn} cls=${'sm' + (orig ? ' primary' : '')} title="Escucha el sonido sin corregir para comparar" onClick=${toggleAudioOriginal}>${orig ? 'Oyendo el original' : 'Comparar (A)'}</${Btn}>`}
     </div>
     <div class="dim small">${voz
       ? 'Quita el ruido de fondo (también mientras hablas: ventilador, aire, tráfico, sala) y el retumbe, suaviza las eses, da presencia a la voz e iguala el volumen. Se oye al reproducir.'
